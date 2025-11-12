@@ -1,0 +1,48 @@
+defaults:
+  - env: wheel
+
+# Experiment settings
+env_name: WheelEnv
+random_seed: 42
+exp_name: ppo_wheel_experiment
+
+# Training parameters
+num_train_steps: 500000
+max_eps_steps: 1500
+update_interval: 1000
+
+# PPO hyperparameters
+num_epochs: 100
+batch_size: 64
+gamma: 0.99
+eps_clip: 0.2
+entropy_coef: 0.01
+value_loss_coef: 0.5
+max_grad_norm: 0.5
+
+# Network architecture
+hidden_dim: 64
+lr_actor: 0.0003
+lr_critic: 0.001
+activation: tanh
+
+# Action space
+continuous_action_space: false
+action_std_init: 0.1
+
+# Logging and checkpointing
+log_interval: 10000
+save_interval: 100000
+log_dir: logs
+ckpt_dir: checkpoints
+
+# Evaluation
+num_eval_eps: 10
+eval_ckpt_name: ""
+render_mode: false
+
+# Device
+device: cpu
+
+# Miscellaneous
+verbose: false

@@ -1,0 +1,10 @@
+
+defaults:
+  - alg: ppo_default     # or rainbow_default
+  - env: wheel            # assuming you have configs/env/wheel.yaml
+  - _self_
+
+# Global training config (shared)
+training:
+  mode: train
+  hydra_output_dir: ${hydra:run.dir}

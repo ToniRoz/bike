@@ -1,0 +1,10 @@
+_target_: Environment.wheel_env.WheelEnv
+
+
+len_theta: 360
+n_spokes: 36
+
+
+reward_func: normalized #percentage, normalized, raw
+action_space_selection: discrete #continous
+state_space_selection: rimpoints #spoketensions rimandspokes

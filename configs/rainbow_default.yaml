@@ -1,0 +1,57 @@
+defaults:
+  - env: wheel
+
+# Experiment settings
+id: rainbow_wheel_experiment
+seed: 123
+
+# Training parameters
+T_max: 500000
+max_episode_length: 1000
+learn_start: 10000
+batch_size: 64
+
+# Network architecture
+history_length: 1
+architecture: canonical
+hidden_size: 800
+noisy_std: 0.1
+
+# IQN components
+N_quantiles: 32          # Number of quantiles for training
+K_quantiles: 32          # Number of quantiles for evaluation
+embedding_dim: 64        # Dimension of cosine embedding for quantiles
+kappa: 1.0              # Huber loss threshold
+
+# Memory settings
+memory_capacity: 1000000
+replay_frequency: 4
+priority_exponent: 0.5
+priority_weight: 0.4
+
+# Learning parameters
+multi_step: 3
+discount: 0.99
+learning_rate: 0.0000625
+adam_eps: 0.00015
+norm_clip: 10.0
+target_update: 6000
+
+# Evaluation
+evaluation_interval: 100000
+evaluation_episodes: 10
+evaluation_size: 500
+
+# Checkpointing
+checkpoint_interval: 100000
+
+# Miscellaneous
+reward_clip: 0
+render: false
+device: cuda
+enable_cudnn: true
+
+# Paths
+model_path: null
+memory_path: null
+results_dir: results
