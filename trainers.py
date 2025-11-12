@@ -28,21 +28,23 @@ from hydra.core.hydra_config import HydraConfig  # ✅ this import is required
 import os
 
 class BaseTrainer:
-    def __init__(self, config, env, writer=None):
+    def __init__(self, config, env, writer=None, output_dir=None):
         self.config = config
         self.env = env
         self.writer = writer
 
         # --- Hydra-safe output directory setup ---
-        try:
-            # Works when running under a Hydra-managed script (e.g. train_rainbow.py with @hydra.main)
-            self.run_dir = Path(HydraConfig.get().runtime.output_dir)
-        except Exception:
-            # Fallback for non-Hydra contexts (e.g. debugging manually)
-            self.run_dir = Path("/tmp/rainbow_fallback")
-            print(f"[BaseTrainer] Warning: HydraConfig not initialized, using {self.run_dir}")
-        # In BaseTrainer
-        #self.results_dir = Path("/tmp/rainbow_test")
+        if output_dir is not None:
+            # Use the provided output_dir (from experiment script)
+            self.run_dir = Path(output_dir)
+        else:
+            try:
+                # Works when running under a Hydra-managed script (e.g. train_rainbow.py with @hydra.main)
+                self.run_dir = Path(HydraConfig.get().runtime.output_dir)
+            except Exception:
+                # Fallback for non-Hydra contexts (e.g. debugging manually)
+                self.run_dir = Path("/tmp/rainbow_fallback")
+                print(f"[BaseTrainer] Warning: HydraConfig not initialized, using {self.run_dir}")
 
         # --- Make sure directories exist ---
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -59,11 +61,8 @@ class BaseTrainer:
         print(f"[BaseTrainer] TensorBoard  -> {self.tensorboard_dir}")
         print(f"[BaseTrainer] Results      -> {self.results_dir}")
 
-        ######
-
-
-        
     def log(self, message):
+        from datetime import datetime
         timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
         print(f"[{timestamp}] {message}")
     
@@ -77,27 +76,22 @@ class BaseTrainer:
         raise NotImplementedError
 
 
-
 class RainbowTrainer(BaseTrainer):
     """Trainer for Rainbow DQN"""
     
-    def __init__(self, config: RainbowConfig, env, writer=None):
-        super().__init__(config, env, writer)
-
+    def __init__(self, config, env, writer=None, output_dir=None):
+        # Pass output_dir to parent class
+        super().__init__(config, env, writer, output_dir=output_dir)
         
-        # Setup results directory
-        #self.results_dir = Path(config.results_dir) / config.id
-        #self.results_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Wrap environment
-        #self.env = LegacyEnvWrapper(env, device=config.device)
-        #self.env.train()
+        # Rest of your initialization code stays the same...
         self.env = env
         
         # Create agent
+        from Agents import RainbowAgent
         self.agent = RainbowAgent(config, self.env)
         
         # Setup memory
+        from Memory import ReplayMemory
         if config.model_path and config.memory_path and os.path.exists(config.memory_path):
             self.memory = self._load_memory(config.memory_path)
             self.log("Loaded memory from checkpoint")
@@ -119,6 +113,7 @@ class RainbowTrainer(BaseTrainer):
         self.priority_weight_increase = (
             (1 - config.priority_weight) / (config.T_max - config.learn_start)
         )
+
     
     def _create_validation_memory(self):
         """Create validation memory"""

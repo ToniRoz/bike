@@ -28,8 +28,7 @@ def setup_logging(output_dir: str, use_tensorboard: bool = True):
     return None
 
 
-@hydra.main(config_path="configs", config_name="rainbow_default", version_base=None)
-def train(cfg: DictConfig):
+def train(cfg: DictConfig, output_dir: str = None):
     """Train Rainbow DQN using Hydra"""
     print("\n" + "=" * 50)
     print("Training Rainbow DQN (Hydra)")
@@ -62,8 +61,15 @@ def train(cfg: DictConfig):
     ##############################
     # 2. Setup logging
     ##############################
-    output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    writer = setup_logging(output_dir)
+    # Use provided output_dir or fall back to Hydra runtime dir
+    if output_dir is None:
+        try:
+            output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+        except:
+            output_dir = "outputs/default_run"
+            os.makedirs(output_dir, exist_ok=True)
+    
+    writer = setup_logging(str(output_dir))
 
     ##############################
     # 3. Create environment
@@ -73,8 +79,8 @@ def train(cfg: DictConfig):
     ##############################
     # 4. Create trainer
     ##############################
-    trainer = RainbowTrainer(cfg, env, writer)
-
+    #trainer = RainbowTrainer(cfg, env, writer)
+    trainer = RainbowTrainer(cfg, env, writer, output_dir=output_dir)  # ✓ Pass output_dir
     ##############################
     # 5. Train or evaluate
     ##############################
@@ -94,4 +100,9 @@ def train(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    train()
+    # Add Hydra decorator when running directly
+    @hydra.main(config_path="configs", config_name="rainbow_default", version_base=None)
+    def main(cfg: DictConfig):
+        train(cfg)
+    
+    main()

@@ -5,6 +5,6 @@ len_theta: 360
 n_spokes: 36
 
 
-reward_func: normalized #percentage, normalized, raw
+reward_func: percentage #percentage, normalized, raw, spokes
 action_space_selection: discrete #continous
 state_space_selection: rimpoints #spoketensions rimandspokes
