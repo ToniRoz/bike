@@ -46,6 +46,71 @@ def fast_wheel_calc(K, F_matrix, B_rad, B_lat, B_tan, tensionchanges, state_spac
 
     return next_state, reward
 
+@njit
+def fast_wheel_calc_with_tension(
+    K, F_matrix,
+    B_rad, B_lat, B_tan,
+    tensionchanges,
+    n_vec, b_vec, EA, lengths,
+    B_spk
+):
+    # -------------------------
+    # Solve rim deformation
+    # -------------------------
+    F = F_matrix @ tensionchanges
+    dm = np.linalg.solve(K, F)
+
+    rad_def = B_rad @ dm
+    lat_def = B_lat @ dm
+    tan_def = B_tan @ dm
+
+    # Rim state
+    npts = len(rad_def)
+    tot_def = np.empty((npts, 3))
+    tot_def[:, 0] = rad_def * 1000
+    tot_def[:, 1] = lat_def * 1000
+    tot_def[:, 2] = tan_def * 1000
+
+    reward = -np.sum(np.sqrt(
+        tot_def[:, 0]**2 +
+        tot_def[:, 1]**2 +
+        tot_def[:, 2]**2
+    ))
+
+    # -------------------------
+    # Correct tension computation: d = B_theta(θ_spoke) @ dm
+    # -------------------------
+    n_spokes = len(tensionchanges)
+    dT = np.empty(n_spokes)
+
+    for i in range(n_spokes):
+        # Compute d vector exactly like ModeMatrix.spoke_tension_change
+        d = B_spk[i] @ dm   # (4-element vector: u, v, w, phi)
+
+        u = d[0]
+        v = d[1]
+        w = d[2]
+        phi = d[3]
+
+        # Compute un = (u, v, w) + phi * cross(e3, b)
+        cx = -b_vec[i, 2]
+        cy =  b_vec[i, 0]
+        cz =  0.0
+
+        un0 = u + phi * cx
+        un1 = v + phi * cy
+        un2 = w + phi * cz
+
+        a = tensionchanges[i]  # adjustment
+
+        dT[i] = EA[i]/lengths[i] * (
+            a - (n_vec[i,0]*un0 + n_vec[i,1]*un1 + n_vec[i,2]*un2)
+        )
+
+    return tot_def.flatten(), reward, dT
+
+
+
 
 class WheelEnv(gym.Env):
 
@@ -82,6 +147,9 @@ class WheelEnv(gym.Env):
 
         self.adjustment_per_turn = 25.4 / 56 / 1000
 
+
+
+
         self.theta = np.linspace(-np.pi, np.pi, 360)
         self.first_reward = 0
         self.best_reward = 0
@@ -97,8 +165,8 @@ class WheelEnv(gym.Env):
         
         if state_space_selection == "spoketensions":
             self.observation_space = gym.spaces.Box(
-                low=-50.0, 
-                high=50.0, 
+                low=400.0, 
+                high=1200.0, 
                 shape=(self.n_spokes,), 
                 dtype=np.float32
             )
@@ -181,6 +249,7 @@ class WheelEnv(gym.Env):
 
         self.last_state_norm = 0
         self.best_state_norm = 0
+        self._prepare_numba_spoke_arrays()
 
     def reset(self, seed=None, options=None):
         """Reset environment and return initial observation."""
@@ -194,12 +263,12 @@ class WheelEnv(gym.Env):
         self.tensionchanges = self.spoke_turns * self.adjustment_per_turn
         self.previous_turns = self.spoke_turns.copy()
         
-        state, state_norm, _ = self.wheel_calc(self.tensionchanges)
+        state, state_norm, _ = self.wheel_calc_new(self.tensionchanges)
         self.last_state_norm = state_norm
         self.first_state_norm = state_norm
         
         # Update best reward if improved
-        discard_,self.best_state_norm,discard2_ = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
+        discard_,self.best_state_norm,discard2_ = self.wheel_calc_new(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
         #print(reward,'  ',self.best_reward)
         
         info = {"spokes": self.tensionchanges,
@@ -243,7 +312,7 @@ class WheelEnv(gym.Env):
 
 
 
-        next_state, state_norm, _ = self.wheel_calc(self.tensionchanges)
+        next_state, state_norm, _ = self.wheel_calc_new(self.tensionchanges)
         wheel_improvement = 100 * (state_norm - self.first_state_norm) / (abs(self.first_state_norm) + 1e-6)
         step_improvement = 100 * (state_norm - self.last_state_norm) / (abs(self.last_state_norm) + 1e-6)
         
@@ -296,7 +365,69 @@ class WheelEnv(gym.Env):
         """Close the environment."""
         pass
 
-    def wheel_calc(self, tensionchanges):
+    def _prepare_numba_spoke_arrays(self):
+        spokes = self.wheel.spokes
+        n = len(spokes)
+
+        # Allocate arrays for Numba
+        self.n_vec = np.zeros((n, 3), dtype=np.float64)
+        self.b_vec = np.zeros((n, 3), dtype=np.float64)
+        self.EA = np.zeros(n, dtype=np.float64)
+        self.lengths = np.zeros(n, dtype=np.float64)
+
+        # NEW: B_spk[i] = B_theta(theta_spoke_i)
+        # Shape is (n_spokes, 4 + 8*n_modes)
+        dof = 4 + 8 * self.mm.n_modes
+        self.B_spk = np.zeros((n, 4, dof), dtype=np.float64)
+
+
+        # Also keep track of the spoke's angular index relative to rim θ grid (optional)
+        self.spoke_theta_index = np.zeros(n, dtype=np.int64)
+
+        for i, s in enumerate(spokes):
+            # Direction vector
+            self.n_vec[i] = s.n
+            # Vector from rim point to hub eyelet
+            self.b_vec[i] = s.b
+            # EA stiffness
+            self.EA[i] = s.EA
+            # Spoke length
+            self.lengths[i] = s.length
+
+            # --- Compute B_spk row ---
+            theta_i = s.rim_pt[1]            # spoke nipple angle
+            B_i = self.mm.B_theta(theta_i)   # shape (4, dof)
+            self.B_spk[i, :, :] = B_i     # shape (4, dof)
+
+
+            # (Optional) nearest rim θ index (still used in your nn state)
+            self.spoke_theta_index[i] = np.argmin(np.abs(self.theta - theta_i))
+
+
+
+    def wheel_calc_new(self, tensionchanges):
+
+        next_state, reward, tensions = fast_wheel_calc_with_tension(
+            self.K,
+            self.F_matrix,
+            self.B_rad,
+            self.B_lat,
+            self.B_tan,
+            tensionchanges.astype(np.float64),
+            self.n_vec,
+            self.b_vec,
+            self.EA,
+            self.lengths,
+            self.B_spk,
+        )
+
+        # If the state space is spoke tensions, we return that
+        if self.state_space_selection == "spoketensions":
+            return tensions.astype(np.float32), reward, False
+
+        return next_state.astype(np.float32), reward, False
+    
+    def wheel_calc_old(self, tensionchanges):
         """Calculate wheel deformation and reward."""
         
         next_state, reward = fast_wheel_calc(
@@ -308,20 +439,82 @@ class WheelEnv(gym.Env):
             tensionchanges.astype(np.float64),
             self.state_space_selection # this is here as a reminder that we might be able to optimize spoke teension calculation in the same manner (njit)
         )
-        
+
         done = False
 
 
         return next_state.astype(np.float32), reward, done
+
     
-    
-    
 
 
-#env = WheelEnv(reward_func="spoke")
-#for i in range(500):
-#    state, info = env.reset()
-#    first_state_norm = info['raw state norm']
-#    print(first_state_norm)
+import numpy as np
+from bikewheelcalc import BicycleWheel, Rim, Hub, ModeMatrix
 
 
+# --- Initialize a tiny wheel with 1 spoke ---
+env = WheelEnv(n_spokes=36, state_space_selection='spoketensions')
+
+
+# Override some settings for simplicity
+env.random_spoke_n = 0  # don't randomize at reset
+env.reward_func = "raw"
+
+# Reset environment
+state, info = env.reset()
+
+print("Initial spoke turns:", env.spoke_turns)
+print("Initial tension changes (should be zero):", env.tensionchanges)
+
+# Let's apply some steps
+actions = [0.5, 0.5, -0.5, -0.5]  # adjust in one direction then back
+
+all_tensions = []
+all_dT = []
+
+for i, a in enumerate(actions):
+    # For continuous action space, action = [spoke_index, delta_turns]
+    action = np.array([0, a], dtype=np.float32)
+    next_state, reward, terminated, truncated, info = env.step(action)
+
+    print(f"\nStep {i+1}:")
+    print("  Applied turn:", a)
+    print("  Spoke turns:", env.spoke_turns)
+    print("  Tension changes dT:", next_state if env.state_space_selection == 'spoketensions' else 'n/a')
+
+    # Track cumulative tension
+    current_tension = 800. + next_state
+    print("  Current tension (initial + changes):", current_tension)
+
+    all_tensions.append(current_tension)
+    all_dT.append(env.tensionchanges[0])
+
+import time 
+
+env = WheelEnv()
+start = time.time()
+for _ in range(10000):
+    spoke_turns = np.zeros(36)
+    adjustment_per_turn = 25.4 / 56 / 1000
+    n_random = 5
+    random_spoke_turns_max = 2
+    random_indices = np.random.choice(36, size=n_random, replace=False)
+    spoke_turns[random_indices] = np.random.rand(n_random) * random_spoke_turns_max - (random_spoke_turns_max/2)
+    tensionchanges = spoke_turns * adjustment_per_turn
+    old_tensions = env.wheel_calc_old(tensionchanges)
+end = time.time()
+print("Old wheel_calc time:", end - start)
+
+# New calc
+start = time.time()
+for _ in range(10000):
+    spoke_turns = np.zeros(36)
+    adjustment_per_turn = 25.4 / 56 / 1000
+    n_random = 5
+    random_spoke_turns_max = 2
+    random_indices = np.random.choice(36, size=n_random, replace=False)
+    spoke_turns[random_indices] = np.random.rand(n_random) * random_spoke_turns_max - (random_spoke_turns_max/2)
+    tensionchanges = spoke_turns * adjustment_per_turn
+    new_tensions = env.wheel_calc_new(tensionchanges)
+end = time.time()
+print("New wheel_calc time:", end - start)
