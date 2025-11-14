@@ -1,5 +1,7 @@
 """
-Training logic for RL agents
+Todo:
+    add dynamic state space from env (rainbow)
+    add lstm support (rainbow) (ppo) should take the action with the last states
 """
 import os
 import bz2

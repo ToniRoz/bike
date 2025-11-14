@@ -35,7 +35,11 @@ from Environment.wheel_env import WheelEnv
 
 
 
+'''
+Todo:
+  add network size parameter for value net (also check what over nets in the hansen code ) to the config 
 
+'''
 
 
 @hydra.main(config_name='config', config_path='.', version_base=None)

@@ -6,14 +6,7 @@ import numpy as np
 
 from numba import njit
 
-"""
-Todo:
-add new state spaces:
-     add code for current (only rimpoints state)
-     look up how to calculate the spoketensions (can we jit this as well?)
-     add the other two sate space configurations 
-     look through the whole code and remove / edit gpt comments
-"""
+
 
 
 @njit

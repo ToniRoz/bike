@@ -9,10 +9,11 @@ from numba import njit
 """
 Todo:
 add new state spaces:
-     add code for current (only rimpoints state)
-     look up how to calculate the spoketensions (can we jit this as well?)
-     add the other two sate space configurations 
+     add code for current (only rimpoints state) (done)
+     look up how to calculate the spoketensions (can we jit this as well?) (done)
+     add the other two sate space configurations -> we actually dont need to track a tension array since we can go from init
      look through the whole code and remove / edit gpt comments
+     add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
 """
 
 
