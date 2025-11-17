@@ -156,8 +156,8 @@ class RainbowTrainer(BaseTrainer):
         step_counter = 0
         glob_step = 0
         first_state_norm = -1000
-        first_tensions_norm = 10
-        first_turns_norm = 10
+        first_tensions = 10
+        first_turns = 10
 
         try:
             state, _ = self.env.reset()
@@ -176,9 +176,9 @@ class RainbowTrainer(BaseTrainer):
                                 current_norm = info['raw state norm']
                                 current_tension = np.linalg.norm(info['spoke tensions']-800)
                                 current_turns = np.sum(abs(info['spoke turns']))
-                                wheel_change = 100 * (current_norm - first_state_norm) / max(abs(first_state_norm), 1e-8)
-                                turn_change = 100 * (current_turns - first_turns) / max(abs(first_turns), 1e-8)
-                                tension_change = 100 * (current_tension - first_tension) / max(abs(first_tension), 1e-8)
+                                wheel_change = -100 * (current_norm - first_state_norm) / max(abs(first_state_norm), 1e-15)
+                                turn_change = -100 * (current_turns - first_turns) / max(abs(first_turns), 1e-15)
+                                tension_change = -100 * (current_tension - first_tensions) / max(abs(first_tensions), 1e-15)
                                 self.writer.add_scalar(f'episode/return', episode_reward, glob_step)
                                 self.writer.add_scalar(f'episode/length', step_counter, glob_step)
                                 self.writer.add_scalar(f'environment/wheel improvement', wheel_change, glob_step)
@@ -194,7 +194,7 @@ class RainbowTrainer(BaseTrainer):
                     step_counter = 0
                     state, info = self.env.reset()
                     first_state_norm = info['raw state norm']
-                    first_tension = np.linalg.norm(info['spoke tensions']-800)
+                    first_tensions = np.linalg.norm(info['spoke tensions']-800)
                     first_turns = np.sum(abs(info['spoke turns']))
                     done = False 
 
