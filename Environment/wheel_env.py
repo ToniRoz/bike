@@ -315,7 +315,7 @@ class WheelEnv(gym.Env):
         
         # Compute improvement reward
         if self.reward_func == "raw":
-            reward = state_norm
+            reward = -state_norm
         
         elif self.reward_func == "percentage":
             reward = step_improvement
@@ -433,43 +433,3 @@ class WheelEnv(gym.Env):
 
     
 
-import numpy as np
-from bikewheelcalc import BicycleWheel, Rim, Hub, ModeMatrix
-
-
-# --- Initialize a tiny wheel with 1 spoke ---
-env = WheelEnv(n_spokes=36, state_space_selection='spoketensions')
-
-
-# Override some settings for simplicity
-env.random_spoke_n = 0  # don't randomize at reset
-env.reward_func = "raw"
-
-# Reset environment
-state, info = env.reset()
-
-print("Initial spoke turns:", env.spoke_turns)
-print("Initial tension changes (should be zero):", env.tensionchanges)
-
-# Let's apply some steps
-actions = [0.5, 0.5, -0.5, -0.5]  # adjust in one direction then back
-
-all_tensions = []
-all_dT = []
-
-for i, a in enumerate(actions):
-    # For continuous action space, action = [spoke_index, delta_turns]
-    action = np.array([0, a], dtype=np.float32)
-    next_state, reward, terminated, truncated, info = env.step(action)
-
-    print(f"\nStep {i+1}:")
-    print("  Applied turn:", a)
-    print("  Spoke turns:", env.spoke_turns)
-    print("  Tension changes dT:", next_state if env.state_space_selection == 'spoketensions' else 'n/a')
-    print('terminated:', terminated, 'truncated:', truncated)
-
-
-    print("  Current tension (initial + changes):", next_state)
-
-    all_tensions.append(next_state)
-    all_dT.append(env.tensionchanges[0])
