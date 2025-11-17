@@ -18,8 +18,8 @@ hidden_size: 800
 noisy_std: 0.1
 
 # IQN components
-N_quantiles: 32          # Number of quantiles for training
-K_quantiles: 32          # Number of quantiles for evaluation
+num_quantiles: 32        # Number of quantiles for training
+num_quantiles_eval: 32   # Number of quantiles for evaluation
 embedding_dim: 64        # Dimension of cosine embedding for quantiles
 kappa: 1.0              # Huber loss threshold
 

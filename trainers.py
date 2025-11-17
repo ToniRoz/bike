@@ -19,7 +19,7 @@ from config import RainbowConfig, PPOConfig
 from Agents import RainbowAgent, PPOAgent
 from Memory import ReplayMemory
 
-
+import gymnasium as gym
 
 from omegaconf import OmegaConf
 
@@ -86,25 +86,39 @@ class RainbowTrainer(BaseTrainer):
         # Pass output_dir to parent class
         super().__init__(config, env, writer, output_dir=output_dir)
         
-        # Rest of your initialization code stays the same...
+        # Rest of your initialization code...
         self.env = env
+        
+        # ========== ADD THIS SECTION (INFER STATE SHAPE) ==========
+        # Infer state shape from environment
+        if isinstance(env.observation_space, gym.spaces.Box):
+            state_shape = env.observation_space.shape
+        else:
+            raise ValueError(f"Unsupported observation space: {type(env.observation_space)}")
+        
+        self.log(f"[RainbowTrainer] State shape: {state_shape}")
+        # ========== END OF NEW SECTION ==========
         
         # Create agent
         from Agents import RainbowAgent
         self.agent = RainbowAgent(config, self.env)
         
-        # Setup memory
+        # Setup memory - NOW WITH state_shape PARAMETER
         from Memory import ReplayMemory
         if config.model_path and config.memory_path and os.path.exists(config.memory_path):
             self.memory = self._load_memory(config.memory_path)
             self.log("Loaded memory from checkpoint")
         else:
-            self.memory = ReplayMemory(config, config.memory_capacity)
+            # ========== FIX: Add state_shape parameter ==========
+            self.memory = ReplayMemory(config, config.memory_capacity, state_shape)
+            #                                                          ^^^^^^^^^^^^ ADD THIS
         
-        # Validation memory
-        self.val_memory = self._create_validation_memory()
+        # Validation memory - NOW WITH state_shape PARAMETER
+        # ========== FIX: Pass state_shape to method ==========
+        self.val_memory = self._create_validation_memory(state_shape)
+        #                                                 ^^^^^^^^^^^^ ADD THIS
         
-        # Training metrics
+        # Training metrics (rest stays the same)
         self.metrics = {
             'steps': [],
             'rewards': [],
@@ -118,19 +132,24 @@ class RainbowTrainer(BaseTrainer):
         )
 
     
-    def _create_validation_memory(self):
+    def _create_validation_memory(self, state_shape):  # ← Add state_shape parameter
         """Create validation memory"""
-        val_mem = ReplayMemory(self.config, self.config.evaluation_size)
+        # ========== FIX: Pass state_shape to ReplayMemory ==========
+        val_mem = ReplayMemory(self.config, self.config.evaluation_size, state_shape)
+        #                                                                 ^^^^^^^^^^^^ ADD THIS
         T, done = 0, True
         
         while T < self.config.evaluation_size:
             if done:
                 state, _ = self.env.reset()
-            next_state, reward, terminated, truncated, _ = self.env.step(
-                np.random.randint(0, 72)# i hardcoded the size of the action space her because for some reason this implementation doesnt handle gym actions spaces
-            )
+            
+            # Use proper action sampling (no more hardcoded values!)
+            action = self.env.action_space.sample()
+            next_state, reward, terminated, truncated, _ = self.env.step(action)
+            
             val_mem.append(state, -1, 0.0, done)
             state = next_state
+            done = terminated or truncated
             T += 1
         
         return val_mem
@@ -193,9 +212,9 @@ class RainbowTrainer(BaseTrainer):
                     episode_reward = 0
                     step_counter = 0
                     state, info = self.env.reset()
-                    first_state_norm = info['raw state norm']
-                    first_tensions = np.linalg.norm(info['spoke tensions']-800)
-                    first_turns = np.sum(abs(info['spoke turns']))
+                    first_state_norm = info.get('raw state norm', -1000)
+                    first_tensions = np.linalg.norm(info.get('spoke tensions', np.zeros(1))-800)
+                    first_turns = np.sum(abs(info.get('spoke turns', np.zeros(1))))
                     done = False 
 
                 # Reset noise
@@ -205,7 +224,6 @@ class RainbowTrainer(BaseTrainer):
                 # Take action
                 action = self.agent.act(state)
                 next_state, reward, terminated, truncated, info = self.env.step(action)
-
 
                 if terminated or truncated:
                     done = True
@@ -263,8 +281,8 @@ class RainbowTrainer(BaseTrainer):
 
             except Exception as e:
                 self.log(f"Unexpected error at step {T}: {e}")
-                self.log(action)
-                self.log(reward)
+                self.log(f"Action: {action}")
+                self.log(f"Reward: {reward}")
                 break
 
         self.log("Training completed!")
@@ -289,7 +307,7 @@ class RainbowTrainer(BaseTrainer):
                 episode_reward += reward
                 total_q += self.agent.evaluate_q(state)
                 if terminated or truncated: 
-                    done=True
+                    done = True
             
             total_reward += episode_reward
         
@@ -316,10 +334,8 @@ class RainbowTrainer(BaseTrainer):
             self._save_memory(self.config.memory_path)
     
     def save_checkpoint(self, path, step):
-        #local_path = self.local_checkpoint_dir / f"checkpoint_step_{step}.pth"
         self.agent.save(path)
         self.log(f"Checkpoint saved locally at {path}")
-
 
     
     def evaluate(self):
@@ -327,7 +343,6 @@ class RainbowTrainer(BaseTrainer):
         self.log("Running evaluation...")
         self.agent.eval()
         self._evaluate_agent(0)
-
 
 class PPOTrainer(BaseTrainer):
     """Trainer for PPO"""

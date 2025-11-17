@@ -7,159 +7,239 @@ from torch import optim
 from torch.nn.utils import clip_grad_norm_
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Categorical
-
+import gymnasium as gym
 
 from Models import DQN
 
 
 class RainbowAgent:
-  def __init__(self, args, env):
-      self.env = env
-      self.action_space = 72
-      self.device = args.device
-      
-      # IQN parameters (replacing C51 parameters)
-      self.N = args.N_quantiles  # Number of quantiles for training
-      self.K = args.K_quantiles  # Number of quantiles for evaluation
-      self.kappa = args.kappa    # Huber loss threshold
-      self.embedding_dim = args.embedding_dim
-      
-      # Training parameters
-      self.batch_size = args.batch_size
-      self.n = args.multi_step
-      self.discount = args.discount
-
-      self.online_net = DQN(args, self.action_space).to(device=args.device)
-      
-      if args.model_path:  # Load pretrained model if provided
-          self.online_net.load_state_dict(torch.load(args.model_path, map_location='cpu'))
-      
-      self.online_net.train()
-
-      self.target_net = DQN(args, self.action_space).to(device=args.device)
-      self.update_target_net()
-      self.target_net.train()
-      for param in self.target_net.parameters():
-          param.requires_grad = False
-
-      self.optimiser = optim.Adam(self.online_net.parameters(), lr=args.learning_rate, eps=args.adam_eps)
-
-  # Resets noisy weights in all linear layers (of online net only)
-  def reset_noise(self):
-    self.online_net.reset_noise()
-
-  def act(self, state):
-    if not torch.is_tensor(state) and state is not None:
-        state = torch.tensor(state, dtype=torch.float32)
-        device = next(self.online_net.parameters()).device
-        state = state.to(device)
+    """Rainbow DQN agent with dynamic state and action space inference"""
+    
+    def __init__(self, config, env):
+        self.config = config
+        self.env = env
+        self.device = config.device
+        
+        # ========== INFER ACTION SPACE ==========
+        if isinstance(env.action_space, gym.spaces.Discrete):
+            self.action_space = env.action_space.n
+            self.action_type = 'discrete'
+        elif isinstance(env.action_space, gym.spaces.Box):
+            # For Box action spaces, you need to decide how to handle them
+            # Option 1: Treat as discretized (if you have a fixed discretization)
+            # Option 2: Use the product of dimensions
+            self.action_space = np.prod(env.action_space.shape)
+            self.action_type = 'continuous'
+            print(f"[RainbowAgent] Warning: Box action space detected. "
+                  f"Using product of shape: {self.action_space}")
+        else:
+            raise ValueError(f"Unsupported action space type: {type(env.action_space)}")
+        
+        # ========== INFER STATE DIMENSION ==========
+        if isinstance(env.observation_space, gym.spaces.Box):
+            self.state_shape = env.observation_space.shape
+            self.state_dim = np.prod(self.state_shape)
+        else:
+            raise ValueError(f"Unsupported observation space type: {type(env.observation_space)}")
+        
+        print(f"[RainbowAgent] Inferred action_space: {self.action_space} (type: {self.action_type})")
+        print(f"[RainbowAgent] Inferred state_dim: {self.state_dim}, state_shape: {self.state_shape}")
+        
+        # ========== CREATE NETWORKS ==========
+        self.online_net = DQN(config, self.action_space, self.state_dim).to(self.device)
+        self.target_net = DQN(config, self.action_space, self.state_dim).to(self.device)
+        
+        # Initialize target network with same weights
+        self.update_target_net()
+        
+        # Set target network to eval mode
+        for param in self.target_net.parameters():
+            param.requires_grad = False
+        self.target_net.eval()
+        
+        # Optimizer
+        self.optimizer = torch.optim.Adam(
+            self.online_net.parameters(),
+            lr=config.learning_rate,
+            eps=config.adam_eps
+        )
+        
+        # Number of quantiles for training and evaluation
+        self.num_quantiles_train = config.num_quantiles
+        self.num_quantiles_eval = config.num_quantiles_eval if hasattr(config, 'num_quantiles_eval') else 32
+        
+        # Huber loss parameter
+        self.kappa = config.kappa if hasattr(config, 'kappa') else 1.0
+        
+    def reset_noise(self):
+        """Reset noise in noisy layers"""
+        self.online_net.reset_noise()
+    
+    def act(self, state):
+        """Select action using the online network (for training with noise)"""
         with torch.no_grad():
-            # Get quantile values: (1, action_space, K)
-            quantile_values, _ = self.online_net(state.unsqueeze(0), self.K)
-            # Take mean over quantiles to get Q-values: (1, action_space)
-            q_values = quantile_values.mean(dim=2)
-            # Return action with highest Q-value
-            return q_values.argmax(1).item()
-
-  # Acts with an ε-greedy policy (used for evaluation only)
-  def act_e_greedy(self, state, epsilon=0.001):
-    return np.random.randint(0, self.action_space) if np.random.random() < epsilon else self.act(state)
-
-  def learn(self, mem):
-    # Sample transitions
-    idxs, states, actions, returns, next_states, nonterminals, weights = mem.sample(self.batch_size)
-
-    # Get current state quantile values with online network
-    # Shape: (batch_size, action_space, N)
-    current_quantiles, current_taus = self.online_net(states, self.N)
+            # Convert state to tensor
+            if not isinstance(state, torch.Tensor):
+                state = torch.FloatTensor(state).to(self.device)
+            
+            # Add batch dimension if needed
+            if state.dim() == len(self.state_shape):
+                state = state.unsqueeze(0)
+            
+            # Get Q-values (averaged over quantiles)
+            q_values, _ = self.online_net(state, self.num_quantiles_eval)
+            q_values = q_values.mean(dim=2)  # Average over quantiles
+            
+            # Select action with highest Q-value
+            action = q_values.argmax(dim=1).item()
+            
+            # Store for potential debugging
+            self.q_values = q_values
+            
+            return action
     
-    # Select quantiles for taken actions
-    # Shape: (batch_size, N)
-    current_quantiles_a = current_quantiles[range(self.batch_size), actions, :]
-
-    with torch.no_grad():
-        # Double-Q learning: use online network to select actions
-        next_quantiles_online, _ = self.online_net(next_states, self.N)
-        # Get Q-values by averaging over quantiles: (batch_size, action_space)
-        next_q_values = next_quantiles_online.mean(dim=2)
-        # Select best actions
-        next_actions = next_q_values.argmax(1)
+    def act_e_greedy(self, state, epsilon=0.001):
+        """Select action using epsilon-greedy policy (for evaluation)"""
+        if np.random.random() < epsilon:
+            return self.env.action_space.sample()
+        else:
+            return self.act(state)
+    
+    def learn(self, memory):
+        """Perform one step of learning"""
+        # Sample batch from memory
+        idxs, states, actions, returns, next_states, nonterminals, weights = memory.sample(
+            self.config.batch_size
+        )
         
-        # Use target network to evaluate the selected actions
-        self.target_net.reset_noise()
-        next_quantiles_target, _ = self.target_net(next_states, self.N)
-        # Select quantiles for best actions: (batch_size, N)
-        next_quantiles_a = next_quantiles_target[range(self.batch_size), next_actions, :]
+        # Reshape states for network input
+        batch_size = states.shape[0]
+        # states shape: (batch_size, history_length, *state_shape)
+        # Flatten to (batch_size, history_length * state_dim)
+        states = states.reshape(batch_size, -1)
+        next_states = next_states.reshape(batch_size, -1)
         
-        # Compute target quantiles with Bellman equation
-        target_quantiles = returns.unsqueeze(1) + nonterminals * (self.discount ** self.n) * next_quantiles_a
+        # Get current Q-value distributions
+        current_quantiles, taus = self.online_net(states, self.num_quantiles_train)
+        # current_quantiles: (batch_size, action_space, num_quantiles)
+        
+        # Select the quantiles for the taken actions
+        # actions: (batch_size,) -> (batch_size, 1, 1)
+        actions_expanded = actions.unsqueeze(1).unsqueeze(2).expand(
+            batch_size, 1, self.num_quantiles_train
+        )
+        current_quantiles = current_quantiles.gather(1, actions_expanded).squeeze(1)
+        # current_quantiles: (batch_size, num_quantiles)
+        
+        with torch.no_grad():
+            # Double DQN: Use online network to select actions
+            next_q_values, _ = self.online_net(next_states, self.num_quantiles_eval)
+            next_q_values = next_q_values.mean(dim=2)  # Average over quantiles
+            next_actions = next_q_values.argmax(dim=1)
+            
+            # Use target network to evaluate the selected actions
+            next_quantiles, _ = self.target_net(next_states, self.num_quantiles_train)
+            next_actions_expanded = next_actions.unsqueeze(1).unsqueeze(2).expand(
+                batch_size, 1, self.num_quantiles_train
+            )
+            next_quantiles = next_quantiles.gather(1, next_actions_expanded).squeeze(1)
+            # next_quantiles: (batch_size, num_quantiles)
+            
+            # Compute target quantiles
+            # returns: (batch_size,) -> (batch_size, 1)
+            # nonterminals: (batch_size, 1)
+            target_quantiles = returns.unsqueeze(1) + nonterminals * self.config.discount * next_quantiles
+        
+        # Compute quantile Huber loss
+        # Expand dimensions for broadcasting
+        # current_quantiles: (batch_size, num_quantiles, 1)
+        # target_quantiles: (batch_size, 1, num_quantiles)
+        current_quantiles_exp = current_quantiles.unsqueeze(2)
+        target_quantiles_exp = target_quantiles.unsqueeze(1)
+        
+        # TD errors
+        td_errors = target_quantiles_exp - current_quantiles_exp
+        # td_errors: (batch_size, num_quantiles, num_quantiles)
+        
+        # Huber loss
+        huber_loss = torch.where(
+            td_errors.abs() <= self.kappa,
+            0.5 * td_errors.pow(2),
+            self.kappa * (td_errors.abs() - 0.5 * self.kappa)
+        )
+        
+        # Quantile weights
+        taus_exp = taus.unsqueeze(2)  # (batch_size, num_quantiles, 1)
+        quantile_weights = torch.abs(taus_exp - (td_errors < 0).float())
+        
+        # Quantile Huber loss
+        quantile_huber_loss = quantile_weights * huber_loss
+        loss = quantile_huber_loss.sum(dim=2).mean(dim=1)  # (batch_size,)
+        
+        # Apply importance sampling weights
+        loss = (weights * loss).mean()
+        
+        # Optimize
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Gradient clipping
+        if hasattr(self.config, 'grad_clip') and self.config.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), self.config.grad_clip)
+        self.optimizer.step()
+        
+        # Update priorities in memory
+        priorities = quantile_huber_loss.sum(dim=2).mean(dim=1).detach().cpu().numpy()
+        memory.update_priorities(idxs, priorities)
+        
+        return loss.item()
+    
+    def update_target_net(self):
+        """Update target network with online network weights"""
+        self.target_net.load_state_dict(self.online_net.state_dict())
+    
+    def train(self):
+        """Set network to training mode"""
+        self.online_net.train()
+    
+    def eval(self):
+        """Set network to evaluation mode"""
+        self.online_net.eval()
+    
+    def evaluate_q(self, state):
+        """Evaluate Q-value for a state (used in evaluation)"""
+        with torch.no_grad():
+            if not isinstance(state, torch.Tensor):
+                state = torch.FloatTensor(state).to(self.device)
+            
+            if state.dim() == len(self.state_shape):
+                state = state.unsqueeze(0)
+            
+            state = state.reshape(1, -1)
+            q_values, _ = self.online_net(state, self.num_quantiles_eval)
+            q_values = q_values.mean(dim=2)  # Average over quantiles
+            
+            return q_values.max().item()
+    
+    def save(self, path, name='model.pth'):
+        """Save model checkpoint"""
+        import os
+        os.makedirs(path, exist_ok=True)
+        save_path = os.path.join(path, name)
+        torch.save({
+            'online_net': self.online_net.state_dict(),
+            'target_net': self.target_net.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+        }, save_path)
+        print(f"Model saved to {save_path}")
+    
+    def load(self, path):
+        """Load model checkpoint"""
+        checkpoint = torch.load(path, map_location=self.device)
+        self.online_net.load_state_dict(checkpoint['online_net'])
+        self.target_net.load_state_dict(checkpoint['target_net'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        print(f"Model loaded from {path}")
 
-    # Compute pairwise TD errors
-    # current_quantiles_a: (batch_size, N) -> (batch_size, N, 1)
-    # target_quantiles: (batch_size, N) -> (batch_size, 1, N)
-    # td_errors: (batch_size, N, N)
-    td_errors = current_quantiles_a.unsqueeze(2) - target_quantiles.unsqueeze(1)
-    
-    # Compute element-wise Huber loss
-    abs_errors = torch.abs(td_errors)
-    huber_loss = torch.where(
-        abs_errors <= self.kappa,
-        0.5 * td_errors ** 2,
-        self.kappa * (abs_errors - 0.5 * self.kappa)
-    )
-    
-    # Compute quantile weights: |τ - 1(td_error < 0)|
-    # current_taus shape: (batch, N) -> (batch, N, 1) for broadcasting
-    taus_expanded = current_taus.unsqueeze(2)
-    quantile_weight = torch.abs(taus_expanded - (td_errors < 0).float())
-    
-    # Apply quantile weighting to Huber loss
-    # Shape: (batch, N, N)
-    quantile_huber = quantile_weight * huber_loss
-    
-    # Sum over target quantiles (dim=2), mean over current quantiles (dim=1)
-    # Shape: (batch,)
-    loss_per_sample = quantile_huber.sum(dim=2).mean(dim=1) / self.N
-    
-    # Apply importance sampling weights and compute final loss
-    weighted_loss = (weights * loss_per_sample).mean()
-    
-    # Backpropagation
-    self.online_net.zero_grad()
-    weighted_loss.backward()
-    clip_grad_norm_(self.online_net.parameters(), 10)
-    self.optimiser.step()
-
-    # Update priorities with loss values
-    mem.update_priorities(idxs, loss_per_sample.detach().cpu().numpy())
-
-  def update_target_net(self):
-    self.target_net.load_state_dict(self.online_net.state_dict())
-
-  # Save model parameters on current device (don't move model between devices)
-  def save(self, path, name='model.pth'):
-    torch.save(self.online_net.state_dict(), os.path.join(path, name))
-
-  # Evaluates Q-value based on single state (no batch)
-  def evaluate_q(self, state):
-    # Convert numpy state to tensor if needed 
-    if not torch.is_tensor(state):
-        state = torch.tensor(state, dtype=torch.float32)
-    
-    device = next(self.online_net.parameters()).device
-    state = state.to(device)
-    
-    with torch.no_grad():
-        # Get quantile values: (1, action_space, K)
-        quantile_values, _ = self.online_net(state.unsqueeze(0), self.K)
-        # Take mean over quantiles and max over actions
-        return quantile_values.mean(dim=2).max(1)[0].item()
-
-  def train(self):
-    self.online_net.train()
-
-  def eval(self):
-    self.online_net.eval()
 
 
 
