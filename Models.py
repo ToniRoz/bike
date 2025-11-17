@@ -92,7 +92,7 @@ class DQN(nn.Module):
   def __init__(self, args, action_space):
     super(DQN, self).__init__()
     self.action_space = action_space
-    self.input_dim = args.history_length * 1080
+    self.input_dim = args.history_length * (1116)
     self.hidden_size = args.hidden_size
     self.embedding_dim = args.embedding_dim
     

@@ -7,4 +7,4 @@ n_spokes: 36
 
 reward_func: percentage #percentage, normalized, raw, spokes
 action_space_selection: discrete #continous
-state_space_selection: rimpoints #spoketensions rimandspokes
+state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes

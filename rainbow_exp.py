@@ -19,7 +19,7 @@ def run_experiment(reward, hidden_dim, outdir):
 
     # Setup experiment folder
     exp_name = f"rainbow_reward_{reward}_dim_{hidden_dim}"
-    output_dir = Path(outdir) / "exp_folder" / exp_name
+    output_dir = Path(outdir) / "exp_folder_more_state" / exp_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")

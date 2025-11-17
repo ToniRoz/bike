@@ -11,41 +11,79 @@ Todo:
 add new state spaces:
      add code for current (only rimpoints state) (done)
      look up how to calculate the spoketensions (can we jit this as well?) (done)
-     add the other two sate space configurations -> we actually dont need to track a tension array since we can go from init
+     add the other two sate space configurations -> we actually dont need to track a tension array since we can go from init (done)
      look through the whole code and remove / edit gpt comments
+     name variables clearer for better readability
      add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
 """
 
 
+
+
 @njit
-def fast_wheel_calc(K, F_matrix, B_rad, B_lat, B_tan, tensionchanges, state_space_selection):
-
-
-    # Compute force vector from tension
-    #F = A_adj.dot(tensionchanges)
+def fast_wheel_calc_with_tension(
+    K, F_matrix,
+    B_rad, B_lat, B_tan,
+    tensionchanges,
+    n_vec, b_vec, EA, lengths,
+    B_spk
+):
+    # -------------------------
+    # Solve rim deformation
+    # -------------------------
     F = F_matrix @ tensionchanges
-
-    # Solve for deformation modes
     dm = np.linalg.solve(K, F)
-    
-    # Compute deflections
+
     rad_def = B_rad @ dm
     lat_def = B_lat @ dm
     tan_def = B_tan @ dm
 
-    # Stack into (n, 3) deflection array
-    n = len(rad_def)
-    tot_def = np.empty((n, 3), dtype=np.float64)
-    tot_def[:, 0] = rad_def * 1000 # convert to mm from m to avoid very small numbers
+    # Rim state
+    npts = len(rad_def)
+    tot_def = np.empty((npts, 3))
+    tot_def[:, 0] = rad_def * 1000
     tot_def[:, 1] = lat_def * 1000
     tot_def[:, 2] = tan_def * 1000
 
-    # Compute reward (negative sum of norm per point)
-    reward = -np.sum(np.sqrt(tot_def[:, 0]**2 + tot_def[:, 1]**2 + tot_def[:, 2]**2))
+    #reward = -np.sum(np.sqrt(
+    #    tot_def[:, 0]**2 +
+    #    tot_def[:, 1]**2 +
+    #    tot_def[:, 2]**2
+    #))
 
-    next_state = tot_def.flatten()
+    # -------------------------
+    # Correct tension computation: d = B_theta(θ_spoke) @ dm
+    # -------------------------
+    n_spokes = len(tensionchanges)
+    dT = np.empty(n_spokes)
 
-    return next_state, reward
+    for i in range(n_spokes):
+        # Compute d vector exactly like ModeMatrix.spoke_tension_change
+        d = B_spk[i] @ dm   # (4-element vector: u, v, w, phi)
+
+        u = d[0]
+        v = d[1]
+        w = d[2]
+        phi = d[3]
+
+        # Compute un = (u, v, w) + phi * cross(e3, b)
+        cx = -b_vec[i, 2]
+        cy =  b_vec[i, 0]
+        cz =  0.0
+
+        un0 = u + phi * cx
+        un1 = v + phi * cy
+        un2 = w + phi * cz
+
+        a = tensionchanges[i]  # adjustment
+
+        dT[i] = EA[i]/lengths[i] * (
+            a - (n_vec[i,0]*un0 + n_vec[i,1]*un1 + n_vec[i,2]*un2)
+        )
+
+    return tot_def.flatten(), dT+800
+
+
 
 
 class WheelEnv(gym.Env):
@@ -83,6 +121,9 @@ class WheelEnv(gym.Env):
 
         self.adjustment_per_turn = 25.4 / 56 / 1000
 
+
+
+
         self.theta = np.linspace(-np.pi, np.pi, 360)
         self.first_reward = 0
         self.best_reward = 0
@@ -96,11 +137,19 @@ class WheelEnv(gym.Env):
                 dtype=np.float32
             )
         
-        if state_space_selection == "spoketensions":
+        if state_space_selection == "rimandspokes":
             self.observation_space = gym.spaces.Box(
                 low=-50.0, 
-                high=50.0, 
-                shape=(self.n_spokes,), 
+                high=1200.0, 
+                shape=(1080 + self.n_spokes,), 
+                dtype=np.float32
+            )
+
+        if state_space_selection == "spoketensions":
+            self.observation_space = gym.spaces.Box(
+                low=400.0, 
+                high=1200.0, 
+                shape=(self.n_spokes ,), 
                 dtype=np.float32
             )
 
@@ -182,6 +231,9 @@ class WheelEnv(gym.Env):
 
         self.last_state_norm = 0
         self.best_state_norm = 0
+        self.first_tensions = np.zeros(n_spokes)
+        self.tensions = np.zeros(n_spokes)
+        self._prepare_numba_spoke_arrays()
 
     def reset(self, seed=None, options=None):
         """Reset environment and return initial observation."""
@@ -195,21 +247,36 @@ class WheelEnv(gym.Env):
         self.tensionchanges = self.spoke_turns * self.adjustment_per_turn
         self.previous_turns = self.spoke_turns.copy()
         
-        state, state_norm, _ = self.wheel_calc(self.tensionchanges)
+        state, tensions = self.wheel_calc(self.tensionchanges)
+        state_norm = np.linalg.norm(state)
+        self.tensions = tensions
+        self.first_tensions = self.tensions
         self.last_state_norm = state_norm
         self.first_state_norm = state_norm
         
         # Update best reward if improved
-        discard_,self.best_state_norm,discard2_ = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
-        #print(reward,'  ',self.best_reward)
+        best_state, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
+        self.best_state_norm = np.linalg.norm(best_state)
         
-        info = {"spokes": self.tensionchanges,
+        info = {"spoke turns": self.tensionchanges,
                 "raw state norm": state_norm,
                 "best state norm": self.best_state_norm,
+                "spoke tensions": self.tensions,
                 }
         state = np.clip(state.astype(np.float32), 
                        self.observation_space.low, 
                        self.observation_space.high)
+        
+        # If the state space is spoke tensions, we return that
+        if self.state_space_selection == "spoketensions":
+            return tensions.astype(np.float32), info
+        
+        if self.state_space_selection == "rimandspokes":
+            combined_state = np.concatenate([state, tensions])
+            return combined_state.astype(np.float32), info
+        
+        if self.state_space_selection == "rimpoints":
+            return next.astype(np.float32), info
         
         # Gymnasium expects (observation, info) tuple
         return state, info
@@ -244,7 +311,8 @@ class WheelEnv(gym.Env):
 
 
 
-        next_state, state_norm, _ = self.wheel_calc(self.tensionchanges)
+        wheel_displacement, tensions= self.wheel_calc(self.tensionchanges)
+        state_norm = np.linalg.norm(wheel_displacement)
         wheel_improvement = 100 * (state_norm - self.first_state_norm) / (abs(self.first_state_norm) + 1e-6)
         step_improvement = 100 * (state_norm - self.last_state_norm) / (abs(self.last_state_norm) + 1e-6)
         
@@ -285,44 +353,86 @@ class WheelEnv(gym.Env):
 
         
 
-        info = {"turns": self.spoke_turns,
+        info = {"spoke turns": self.spoke_turns,
                 "raw state norm": state_norm,
                 "improvement": wheel_improvement,
+                "spoke tensions": tensions
                 }
         
+
+        if self.state_space_selection == "spoketensions":
+            return tensions.astype(np.float32), reward, terminated, truncated, info
         
-        return next_state, reward, terminated, truncated, info
+        if self.state_space_selection == "rimandspokes":
+            combined_state = np.concatenate([wheel_displacement, tensions])
+            return combined_state.astype(np.float32), reward, terminated, truncated, info
+        
+        if self.state_space_selection == "rimpoints":
+            return wheel_displacement.astype(np.float32), reward, terminated, truncated, info
+    
 
     def close(self):
         """Close the environment."""
         pass
 
+    def _prepare_numba_spoke_arrays(self):
+        spokes = self.wheel.spokes
+        n = len(spokes)
+
+        # Allocate arrays for Numba
+        self.n_vec = np.zeros((n, 3), dtype=np.float64)
+        self.b_vec = np.zeros((n, 3), dtype=np.float64)
+        self.EA = np.zeros(n, dtype=np.float64)
+        self.lengths = np.zeros(n, dtype=np.float64)
+
+        # NEW: B_spk[i] = B_theta(theta_spoke_i)
+        # Shape is (n_spokes, 4 + 8*n_modes)
+        dof = 4 + 8 * self.mm.n_modes
+        self.B_spk = np.zeros((n, 4, dof), dtype=np.float64)
+
+
+        # Also keep track of the spoke's angular index relative to rim θ grid (optional)
+        self.spoke_theta_index = np.zeros(n, dtype=np.int64)
+
+        for i, s in enumerate(spokes):
+            # Direction vector
+            self.n_vec[i] = s.n
+            # Vector from rim point to hub eyelet
+            self.b_vec[i] = s.b
+            # EA stiffness
+            self.EA[i] = s.EA
+            # Spoke length
+            self.lengths[i] = s.length
+
+            # --- Compute B_spk row ---
+            theta_i = s.rim_pt[1]            # spoke nipple angle
+            B_i = self.mm.B_theta(theta_i)   # shape (4, dof)
+            self.B_spk[i, :, :] = B_i     # shape (4, dof)
+
+
+            # (Optional) nearest rim θ index (still used in your nn state)
+            self.spoke_theta_index[i] = np.argmin(np.abs(self.theta - theta_i))
+
+
+
     def wheel_calc(self, tensionchanges):
-        """Calculate wheel deformation and reward."""
-        
-        next_state, reward = fast_wheel_calc(
+
+        wheel_displacement,  tensions = fast_wheel_calc_with_tension(
             self.K,
             self.F_matrix,
             self.B_rad,
             self.B_lat,
             self.B_tan,
             tensionchanges.astype(np.float64),
-            self.state_space_selection # this is here as a reminder that we might be able to optimize spoke teension calculation in the same manner (njit)
+            self.n_vec,
+            self.b_vec,
+            self.EA,
+            self.lengths,
+            self.B_spk,
         )
-        
-        done = False
+        return wheel_displacement, tensions
 
 
-        return next_state.astype(np.float32), reward, done
+
     
-    
-    
-
-
-#env = WheelEnv(reward_func="spoke")
-#for i in range(500):
-#    state, info = env.reset()
-#    first_state_norm = info['raw state norm']
-#    print(first_state_norm)
-
 
