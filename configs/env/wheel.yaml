@@ -8,3 +8,23 @@ n_spokes: 36
 reward_func: percentage #percentage, normalized, raw, spokes
 action_space_selection: discrete #continous
 state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes
+
+
+
+hub_width: 0.05
+hub_diameter: 0.04
+
+rim_radius: 0.3
+rim_area: 100e-6
+rim_I_lat: 1500e-12
+rim_I_rad: 3000e-12
+rim_J_tor: 500e-12
+rim_young_mod: 69e9
+rim_shear_mod: 26e9
+rim_I_warp: 0.0
+
+spokes_crossings: 3
+spokes_diameter: 2.0e-3
+spokes_young_mod: 210e9
+number_modes: 40
+init_tension: 800.

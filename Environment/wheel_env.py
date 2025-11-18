@@ -88,15 +88,43 @@ def fast_wheel_calc_with_tension(
 class WheelEnv(gym.Env):
 
     def __init__(self,
+                 
+                # state space 
                 len_theta=360,
-                n_spokes=36, 
+                n_spokes=36,
+
                 random_spoke_n = 5,
                 random_spoke_turns_max = 2,
 
-                render=False, 
+                render=False,
+
+                #reward function 
+                max_tension_penalty = False,
+                max_tension_threshold = 0,
+                goal_condition ="modulo", 
                 reward_func="percentage", 
                 action_space_selection="continous",
                 state_space_selection = "rimpoints",
+
+
+                # wheel sim parameters:
+                hub_width = 0.05,
+                hub_diameter = 0.04,
+
+                rim_radius = 0.3,
+                rim_area = 100e-6,
+                rim_I_lat = 1500e-12,
+                rim_I_rad = 3000e-12,
+                rim_J_tor = 500e-12,
+                rim_young_mod = 69e9,
+                rim_shear_mod = 26e9,
+                rim_I_warp = 0.0,
+
+                spokes_crossings = 3,
+                spokes_diameter = 2.0e-3,
+                spokes_young_mod = 210e9,
+                number_modes = 40,
+                init_tension = 800.,
 
 
 
@@ -174,25 +202,6 @@ class WheelEnv(gym.Env):
                 dtype=np.float32
             )
 
-
-        ### Wheel Parameters ### these should be input (actually we might want the option to randomize on reset)
-        hub_width = 0.05
-        hub_diameter = 0.04
-
-        rim_radius = 0.3
-        rim_area = 100e-6
-        rim_I_lat = 1500e-12
-        rim_I_rad = 3000e-12
-        rim_J_tor = 500e-12
-        rim_young_mod = 69e9
-        rim_shear_mod = 26e9
-        rim_I_warp = 0.0
-
-        spokes_crossings = 3
-        spokes_diameter = 2.0e-3
-        spokes_young_mod = 210e9
-        number_modes = 40
-        init_tension = 800.
 
         # Create wheel and rim
         self.wheel = BicycleWheel()
