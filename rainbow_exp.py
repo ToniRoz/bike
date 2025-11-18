@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 from train_rainbow import train  
 
-def run_experiment(reward, hidden_dim, outdir):
+def run_experiment(reward, hidden_dim, state_space , outdir):
     # Initialize Hydra
     with initialize(config_path="configs", version_base=None):
         cfg = compose(
@@ -13,6 +13,7 @@ def run_experiment(reward, hidden_dim, outdir):
             overrides=[
                 f"hidden_size={hidden_dim}",     # override hidden_dim directly
                 f"env.reward_func={reward}"    # override reward_func in env config
+                f"env.state_space_selection={state_space}"
             ],
             return_hydra_config=False,
         )
@@ -32,12 +33,14 @@ def run_experiment(reward, hidden_dim, outdir):
 
 
 if __name__ == "__main__":
-    reward_funcs = ["raw", "spoke", "normalized", "percentage"]
-    hidden_dims = [500]
+    reward_funcs = ["raw","spoke","normalized", "percentage"]
+    state_spaces = ["rimpoints" ,"spoketensions", "rimandspokes"]
+    hidden_dims = [250, 800]
 
     for reward in reward_funcs:
         for hidden_dim in hidden_dims:
-            outdir = "outputs"
-            os.makedirs(outdir, exist_ok=True)
-            run_experiment(reward, hidden_dim, outdir)
-            print(f"\n✓ Completed: reward={reward}, hidden_dim={hidden_dim}\n")
+            for state_space in state_spaces:
+                outdir = "outputs"
+                os.makedirs(outdir, exist_ok=True)
+                run_experiment(reward, hidden_dim,state_space, outdir)
+                print(f"\n✓ Completed: reward={reward}, hidden_dim={hidden_dim}\n")

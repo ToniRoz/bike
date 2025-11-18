@@ -6,9 +6,9 @@ id: rainbow_wheel_experiment
 seed: 123
 
 # Training parameters
-T_max: 500000
+T_max: 1000000
 max_episode_length: 1000
-learn_start: 10000
+learn_start: 20000
 batch_size: 64
 
 # Network architecture
