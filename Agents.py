@@ -25,9 +25,6 @@ class RainbowAgent:
             self.action_space = env.action_space.n
             self.action_type = 'discrete'
         elif isinstance(env.action_space, gym.spaces.Box):
-            # For Box action spaces, you need to decide how to handle them
-            # Option 1: Treat as discretized (if you have a fixed discretization)
-            # Option 2: Use the product of dimensions
             self.action_space = np.prod(env.action_space.shape)
             self.action_type = 'continuous'
             print(f"[RainbowAgent] Warning: Box action space detected. "

@@ -12,9 +12,14 @@ add new state spaces:
      add code for current (only rimpoints state) (done)
      look up how to calculate the spoketensions (can we jit this as well?) (done)
      add the other two sate space configurations -> we actually dont need to track a tension array since we can go from init (done)
-     look through the whole code and remove / edit gpt comments
-     name variables clearer for better readability
+     look through the whole code and remove / edit gpt comments (started)
+     name variables clearer for better readability (done)
      add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
+     things to add:     wheel parameters
+                        len theta and n spokes need to be connected to statespace
+                        add option for succes reward and tension max (implement to the right units and compare to calc tension)
+                        starter tension
+     a render option would be nice
 """
 
 
@@ -41,24 +46,18 @@ def fast_wheel_calc_with_tension(
     # Rim state
     npts = len(rad_def)
     tot_def = np.empty((npts, 3))
-    tot_def[:, 0] = rad_def * 1000
+    tot_def[:, 0] = rad_def * 1000 # with adjustment per turn the units here are in [m] and we convert to [mm]
     tot_def[:, 1] = lat_def * 1000
     tot_def[:, 2] = tan_def * 1000
 
-    #reward = -np.sum(np.sqrt(
-    #    tot_def[:, 0]**2 +
-    #    tot_def[:, 1]**2 +
-    #    tot_def[:, 2]**2
-    #))
-
     # -------------------------
-    # Correct tension computation: d = B_theta(θ_spoke) @ dm
+    # tension computation: d = B_theta(θ_spoke) @ dm taken from the original sim and tested for equal output
     # -------------------------
     n_spokes = len(tensionchanges)
     dT = np.empty(n_spokes)
 
     for i in range(n_spokes):
-        # Compute d vector exactly like ModeMatrix.spoke_tension_change
+        # Compute d vector 
         d = B_spk[i] @ dm   # (4-element vector: u, v, w, phi)
 
         u = d[0]
@@ -81,7 +80,7 @@ def fast_wheel_calc_with_tension(
             a - (n_vec[i,0]*un0 + n_vec[i,1]*un1 + n_vec[i,2]*un2)
         )
 
-    return tot_def.flatten(), dT+800
+    return tot_def.flatten(), dT+800 # we add 800 from starter tension (this should be an env variable)
 
 
 
@@ -108,7 +107,7 @@ class WheelEnv(gym.Env):
         self.len_theta = len_theta
         self.n_spokes = n_spokes
         self.episode_counter = 0
-        self.max_tension = 3
+        self.max_tension = 3 # here we should express this in tension instead of turns and relate it to the calculated tension
         self.global_step_count = 0
         self.action_space_selection = action_space_selection
         self.spoke_turns = np.zeros(self.n_spokes)
@@ -123,7 +122,7 @@ class WheelEnv(gym.Env):
 
 
 
-
+        # in the following we need to make the state space depending on nspokes and make another input for the number of points
         self.theta = np.linspace(-np.pi, np.pi, 360)
         self.first_reward = 0
         self.best_reward = 0
@@ -176,7 +175,7 @@ class WheelEnv(gym.Env):
             )
 
 
-        ### Wheel Parameters ###
+        ### Wheel Parameters ### these should be input (actually we might want the option to randomize on reset)
         hub_width = 0.05
         hub_diameter = 0.04
 
@@ -240,23 +239,27 @@ class WheelEnv(gym.Env):
         super().reset(seed=seed)
         
         self.episode_counter = 0
+
+        # randomize the spoke-turns for randomly selected number of spokes 
         self.spoke_turns = np.zeros(self.n_spokes)
         n_random = min(self.random_spoke_n, self.n_spokes)
         random_indices = np.random.choice(self.n_spokes, size=n_random, replace=False)
         self.spoke_turns[random_indices] = np.random.rand(n_random) * self.random_spoke_turns_max - (self.random_spoke_turns_max/2)
+
         self.tensionchanges = self.spoke_turns * self.adjustment_per_turn
         self.previous_turns = self.spoke_turns.copy()
         
-        state, tensions = self.wheel_calc(self.tensionchanges)
-        state_norm = np.linalg.norm(state)
+        # calculate wheel displacement and spoketensions
+        wheel_displacement, tensions = self.wheel_calc(self.tensionchanges)
+        state_norm = np.linalg.norm(wheel_displacement)
         self.tensions = tensions
         self.first_tensions = self.tensions
         self.last_state_norm = state_norm
         self.first_state_norm = state_norm
         
-        # Update best reward if improved
-        best_state, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
-        self.best_state_norm = np.linalg.norm(best_state)
+        # calculate an estimation of a good endstate by taking the residuals of turns when minimized by discrete adjsutment-step-size
+        best_displacement, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
+        self.best_state_norm = np.linalg.norm(best_displacement)
         
         info = {"spoke turns": self.tensionchanges,
                 "raw state norm": state_norm,
@@ -265,16 +268,16 @@ class WheelEnv(gym.Env):
                 }
 
         
-        # If the state space is spoke tensions, we return that
+
         if self.state_space_selection == "spoketensions":
             return tensions.astype(np.float32), info
         
         if self.state_space_selection == "rimandspokes":
-            combined_state = np.concatenate([state, tensions])
+            combined_state = np.concatenate([wheel_displacement, tensions])
             return combined_state.astype(np.float32), info
         
         if self.state_space_selection == "rimpoints":
-            return state.astype(np.float32), info
+            return wheel_displacement.astype(np.float32), info
         
 
 
@@ -288,12 +291,14 @@ class WheelEnv(gym.Env):
 
 
         if self.action_space_selection == "discrete":
+
             spoke_index = action // 2
             adjustment = -0.1 if action % 2 == 0 else 0.1
 
             self.previous_turns = np.copy(self.spoke_turns)
             self.spoke_turns[spoke_index] += adjustment
             self.tensionchanges = self.spoke_turns * self.adjustment_per_turn
+
         
         elif self.action_space_selection == "continous":
             spoke_index = int(np.clip(np.round(action[0]), 0, self.n_spokes - 1))
@@ -301,6 +306,7 @@ class WheelEnv(gym.Env):
             self.previous_turns = np.copy(self.spoke_turns)
             self.spoke_turns[spoke_index] += delta
             self.tensionchanges = self.spoke_turns * self.adjustment_per_turn
+
         
         elif self.action_space_selection == "all_spokes":
                 self.spoke_turns += action
@@ -310,8 +316,8 @@ class WheelEnv(gym.Env):
 
         wheel_displacement, tensions= self.wheel_calc(self.tensionchanges)
         state_norm = np.linalg.norm(wheel_displacement)
-        wheel_improvement = 100 * (state_norm - self.first_state_norm) / (abs(self.first_state_norm) + 1e-6)
-        step_improvement = 100 * (state_norm - self.last_state_norm) / (abs(self.last_state_norm) + 1e-6)
+        wheel_improvement = 100 * ( self.first_state_norm - state_norm ) / (abs(self.first_state_norm) + 1e-6)
+        step_improvement = 100 * (self.first_state_norm - state_norm) / (abs(self.last_state_norm) + 1e-6)
         
         # Compute improvement reward
         if self.reward_func == "raw":
@@ -342,7 +348,7 @@ class WheelEnv(gym.Env):
         
         # Termination conditions
         truncated = self.episode_counter > 40  # Time limit
-        terminated = state_norm <= self.best_state_norm
+        terminated = state_norm <= self.best_state_norm # 'best' state reached
         
         if terminated:
             reward = 50
@@ -431,5 +437,33 @@ class WheelEnv(gym.Env):
 
 
 
-    
+"""
+# should add a real test here
 
+env = WheelEnv(reward_func="percentage", action_space_selection="discrete")
+state, info = env.reset()
+
+state, reward, truncated, terminated, info = env.step(1)
+print("reward:", reward)
+print(info)
+
+state, reward, truncated, terminated, info = env.step(1)
+print("reward:", reward)
+print(info)
+
+state, reward, truncated, terminated, info = env.step(1)
+print("reward:", reward)
+print(info)
+
+state, reward, truncated, terminated, info = env.step(-1)
+print("reward:", reward)
+print(info)
+
+state, reward, truncated, terminated, info = env.step(-1)
+print("reward:", reward)
+print(info)
+
+state, reward, truncated, terminated, info = env.step(-1)
+print("reward:", reward)
+print(info)
+"""
