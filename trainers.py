@@ -165,7 +165,7 @@ class RainbowTrainer(BaseTrainer):
         step_counter = 0
         glob_step = 0
         first_state_norm = -1000
-        first_tensions = 10
+        first_tensions = 1000
         first_turns = 1
 
         try:

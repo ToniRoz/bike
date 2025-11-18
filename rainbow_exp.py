@@ -12,14 +12,14 @@ def run_experiment(reward, hidden_dim, state_space , outdir):
             config_name="rainbow_default",  
             overrides=[
                 f"hidden_size={hidden_dim}",     # override hidden_dim directly
-                f"env.reward_func={reward}"    # override reward_func in env config
+                f"env.reward_func={reward}",    # override reward_func in env config
                 f"env.state_space_selection={state_space}"
             ],
             return_hydra_config=False,
         )
 
     # Setup experiment folder
-    exp_name = f"rainbow_reward_{reward}_dim_{hidden_dim}"
+    exp_name = f"rainbow_reward_{reward}_dim_{hidden_dim}_{state_space}"
     output_dir = Path(outdir) / "exp_folder_more_state" / exp_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -33,8 +33,8 @@ def run_experiment(reward, hidden_dim, state_space , outdir):
 
 
 if __name__ == "__main__":
-    reward_funcs = ["raw","spoke","normalized", "percentage"]
-    state_spaces = ["rimpoints" ,"spoketensions", "rimandspokes"]
+    reward_funcs = ["normalized", "percentage","raw","spoke",]
+    state_spaces = [ "rimandspokes","rimpoints" ,"spoketensions"]
     hidden_dims = [250, 800]
 
     for reward in reward_funcs:

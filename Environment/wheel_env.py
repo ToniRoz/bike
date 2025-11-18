@@ -270,7 +270,7 @@ class WheelEnv(gym.Env):
         best_displacement, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn))
         self.best_state_norm = np.linalg.norm(best_displacement)
         
-        info = {"spoke turns": self.tensionchanges,
+        info = {"spoke turns": self.spoke_turns,
                 "raw state norm": state_norm,
                 "best state norm": self.best_state_norm,
                 "spoke tensions": self.tensions,
@@ -446,11 +446,13 @@ class WheelEnv(gym.Env):
 
 
 
-"""
-# should add a real test here
 
+# should add a real test here
+"""
 env = WheelEnv(reward_func="percentage", action_space_selection="discrete")
 state, info = env.reset()
+first_turns = np.sum(abs(info['spoke turns']))
+print("start turns:", first_turns)
 
 state, reward, truncated, terminated, info = env.step(1)
 print("reward:", reward)
@@ -463,6 +465,10 @@ print(info)
 state, reward, truncated, terminated, info = env.step(1)
 print("reward:", reward)
 print(info)
+current_turns = np.sum(abs(info['spoke turns']))
+print("current turns:", current_turns)
+turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
+print("turn change:", turn_change)
 
 state, reward, truncated, terminated, info = env.step(-1)
 print("reward:", reward)
