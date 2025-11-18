@@ -11,7 +11,10 @@ import time
 import numpy as np
 from tqdm import tqdm
 
-
+"""
+Todo:
+ read and remove useless ai comments
+"""
 
 
 
@@ -57,7 +60,7 @@ class NoisyLinear(nn.Module):
             return F.linear(input, self.weight_mu, self.bias_mu)
 
 
-# Quantile Embedding Network for IQN (keep as is)
+# Quantile Embedding Network for IQN 
 class QuantileEmbedding(nn.Module):
     def __init__(self, embedding_dim, output_dim):
         super(QuantileEmbedding, self).__init__()

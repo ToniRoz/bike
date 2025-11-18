@@ -6,6 +6,10 @@ from hydra.utils import instantiate
 from train_rainbow import train as train_rainbow
 from train_ppo import train as train_ppo
 
+"""
+this should be removed probply
+"""
+
 
 @hydra.main(config_path="configs", config_name="config", version_base=None)
 def main(cfg: DictConfig):

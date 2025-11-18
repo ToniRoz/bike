@@ -1,8 +1,9 @@
 """
 Todo:
-    add dynamic state space from env (rainbow)
+    read and remove useless ai comments (done)
+    add dynamic state space from env (rainbow)(done)
     add lstm support (rainbow) (ppo) should take the action with the last states
-    add logging for tensions and turns 
+    add logging for tensions and turns (done)
 """
 import os
 import bz2
@@ -86,10 +87,8 @@ class RainbowTrainer(BaseTrainer):
         # Pass output_dir to parent class
         super().__init__(config, env, writer, output_dir=output_dir)
         
-        # Rest of your initialization code...
         self.env = env
         
-        # ========== ADD THIS SECTION (INFER STATE SHAPE) ==========
         # Infer state shape from environment
         if isinstance(env.observation_space, gym.spaces.Box):
             state_shape = env.observation_space.shape
@@ -97,28 +96,22 @@ class RainbowTrainer(BaseTrainer):
             raise ValueError(f"Unsupported observation space: {type(env.observation_space)}")
         
         self.log(f"[RainbowTrainer] State shape: {state_shape}")
-        # ========== END OF NEW SECTION ==========
         
-        # Create agent
-        from Agents import RainbowAgent
         self.agent = RainbowAgent(config, self.env)
         
-        # Setup memory - NOW WITH state_shape PARAMETER
+        # Setup memory 
         from Memory import ReplayMemory
         if config.model_path and config.memory_path and os.path.exists(config.memory_path):
             self.memory = self._load_memory(config.memory_path)
             self.log("Loaded memory from checkpoint")
         else:
-            # ========== FIX: Add state_shape parameter ==========
             self.memory = ReplayMemory(config, config.memory_capacity, state_shape)
-            #                                                          ^^^^^^^^^^^^ ADD THIS
         
-        # Validation memory - NOW WITH state_shape PARAMETER
-        # ========== FIX: Pass state_shape to method ==========
+        # Validation memory 
         self.val_memory = self._create_validation_memory(state_shape)
-        #                                                 ^^^^^^^^^^^^ ADD THIS
+
         
-        # Training metrics (rest stays the same)
+        # Training metrics
         self.metrics = {
             'steps': [],
             'rewards': [],
@@ -132,18 +125,15 @@ class RainbowTrainer(BaseTrainer):
         )
 
     
-    def _create_validation_memory(self, state_shape):  # ← Add state_shape parameter
+    def _create_validation_memory(self, state_shape):  
         """Create validation memory"""
-        # ========== FIX: Pass state_shape to ReplayMemory ==========
         val_mem = ReplayMemory(self.config, self.config.evaluation_size, state_shape)
-        #                                                                 ^^^^^^^^^^^^ ADD THIS
         T, done = 0, True
         
         while T < self.config.evaluation_size:
             if done:
                 state, _ = self.env.reset()
             
-            # Use proper action sampling (no more hardcoded values!)
             action = self.env.action_space.sample()
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             
@@ -176,7 +166,7 @@ class RainbowTrainer(BaseTrainer):
         glob_step = 0
         first_state_norm = -1000
         first_tensions = 10
-        first_turns = 10
+        first_turns = 1
 
         try:
             state, _ = self.env.reset()
@@ -195,9 +185,9 @@ class RainbowTrainer(BaseTrainer):
                                 current_norm = info['raw state norm']
                                 current_tension = np.linalg.norm(info['spoke tensions']-800)
                                 current_turns = np.sum(abs(info['spoke turns']))
-                                wheel_change = -100 * (current_norm - first_state_norm) / max(abs(first_state_norm), 1e-15)
-                                turn_change = -100 * (current_turns - first_turns) / max(abs(first_turns), 1e-15)
-                                tension_change = -100 * (current_tension - first_tensions) / max(abs(first_tensions), 1e-15)
+                                wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
+                                turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
+                                tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
                                 self.writer.add_scalar(f'episode/return', episode_reward, glob_step)
                                 self.writer.add_scalar(f'episode/length', step_counter, glob_step)
                                 self.writer.add_scalar(f'environment/wheel improvement', wheel_change, glob_step)
@@ -212,9 +202,9 @@ class RainbowTrainer(BaseTrainer):
                     episode_reward = 0
                     step_counter = 0
                     state, info = self.env.reset()
-                    first_state_norm = info.get('raw state norm', -1000)
-                    first_tensions = np.linalg.norm(info.get('spoke tensions', np.zeros(1))-800)
-                    first_turns = np.sum(abs(info.get('spoke turns', np.zeros(1))))
+                    first_state_norm = info['raw state norm']
+                    first_tensions = np.linalg.norm(info['spoke tensions']-800)
+                    first_turns = np.sum(abs(info['spoke turns']))
                     done = False 
 
                 # Reset noise
@@ -390,7 +380,9 @@ class PPOTrainer(BaseTrainer):
             # Reset environment
             obs, info = self.env.reset(seed=self.config.random_seed)
             first_state_norm = info['raw state norm']
-            #print("reset:",first_state_norm)
+            first_tensions = np.linalg.norm(info['spoke tensions']-800)
+            first_turns = np.sum(abs(info['spoke turns']))
+
             eps_reward = 0
             eps_length = 0
             step_counter = 0
@@ -426,13 +418,17 @@ class PPOTrainer(BaseTrainer):
                 
                 if done:
                     current_norm = info['raw state norm']
-                    #print("first:",first_state_norm)
-                    #print("last:", current_norm)
-                    wheel_change = 100 * (current_norm - first_state_norm) / abs(first_state_norm)
-                    #print("change:", wheel_change)
+                    current_tension = np.linalg.norm(info['spoke tensions']-800)
+                    current_turns = np.sum(abs(info['spoke turns']))
+                    wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
+                    turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
+                    tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
+
                     self.writer.add_scalar(f'episode/return', eps_reward, t_so_far)
                     self.writer.add_scalar(f'episode/length', step_counter, t_so_far)
                     self.writer.add_scalar(f'environment/wheel improvement', wheel_change, t_so_far)
+                    self.writer.add_scalar(f'environment/turn improvement', turn_change, t_so_far)
+                    self.writer.add_scalar(f'environment/tension improvement', tension_change, t_so_far)
                     
                     break
             

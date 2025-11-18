@@ -203,6 +203,8 @@ def train(cfg: dict):
     prev_plan = None
     observation, info_reset  = env.reset(seed=cfg.seed)
     episode_initial_raw_state_norm = info_reset['raw state norm'].copy()
+    episode_initial_spoke_tensions = info_reset['spoke tensions'].copy()
+    episode_initial_spoke_turns = info_reset['spoke turns'].copy()
 
     T = 250
     seed_steps = int(
@@ -248,16 +250,22 @@ def train(cfg: dict):
             r = info['episode']['r'][ienv]
             l = info['episode']['l'][ienv]
             final_raw_state_norm = info['raw state norm'][ienv]
+            current_tension = np.linalg.norm(info['spoke tensions'][ienv]-800)
+            current_turns = np.sum(abs(info['spoke turns'][ienv]))
             
             initial_norm = episode_initial_raw_state_norm[ienv]
+            first_tensions = np.linalg.norm(episode_initial_spoke_tensions[ienv]-800)
+            first_turns = np.sum(abs(episode_initial_spoke_turns))
             
             wheel_change = 100* (final_raw_state_norm - initial_norm) / (abs(initial_norm + 1e-6))
-            print(
-                f"Episode {ep_count[ienv]}: r = {r:.2f}, l = {l}"
-            )
+            turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
+            tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
+
             writer.scalar(f'episode/return', r, global_step + ienv)
             writer.scalar(f'episode/length', l, global_step + ienv)
             writer.scalar(f'environment/wheel improvement', wheel_change, global_step + ienv)
+            writer.add_scalar(f'environment/tension improvement', tension_change, global_step + ienv)
+            writer.add_scalar(f'environment/turn improvement', turn_change, global_step + ienv)
             ep_count[ienv] += 1
 
       if global_step >= seed_steps:

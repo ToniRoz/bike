@@ -1,5 +1,5 @@
 """
-Main training script for RL agents
+do we need this ? 
 """
 import os
 import time

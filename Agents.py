@@ -11,6 +11,12 @@ import gymnasium as gym
 
 from Models import DQN
 
+"""
+Todo:
+    add lstm option to rainbow and ppo 
+"""
+
+
 
 class RainbowAgent:
     """Rainbow DQN agent with dynamic state and action space inference"""
@@ -313,7 +319,6 @@ class ActorCritic(nn.Module):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float32).to(self.device)
 
-        # print("Observation dim:", obs.dim())
         if obs.dim() == 1:
             obs = obs.unsqueeze(0)    # add batch dimension if missing
 

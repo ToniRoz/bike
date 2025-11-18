@@ -33,7 +33,7 @@ def run_experiment(reward, hidden_dim, outdir):
 
 if __name__ == "__main__":
     reward_funcs = ["raw", "spoke", "normalized", "percentage"]
-    hidden_dims = [1000, 500]
+    hidden_dims = [500]
 
     for reward in reward_funcs:
         for hidden_dim in hidden_dims:
