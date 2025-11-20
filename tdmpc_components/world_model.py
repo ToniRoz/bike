@@ -29,6 +29,7 @@ class WorldModel(struct.PyTreeNode):
   action_dim: int = struct.field(pytree_node=False)
   # Architecture
   latent_dim: int = struct.field(pytree_node=False)
+  mlp_dim: int = struct.field(pytree_node=False)
   num_value_nets: int = struct.field(pytree_node=False)
   num_bins: int = struct.field(pytree_node=False)
   symlog_min: float
@@ -44,6 +45,7 @@ class WorldModel(struct.PyTreeNode):
              encoder: TrainState,
              # World model
              latent_dim: int,
+             mlp_dim: int,
              value_dropout: float,
              num_value_nets: int,
              num_bins: int,
@@ -66,8 +68,8 @@ class WorldModel(struct.PyTreeNode):
 
     # Latent forward dynamics model
     dynamics_module = nn.Sequential([
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
         NormedLinear(latent_dim, activation=partial(
             simnorm, simplex_dim=simnorm_dim), dtype=dtype)
     ])
@@ -84,8 +86,8 @@ class WorldModel(struct.PyTreeNode):
 
     # Transition reward model
     reward_module = nn.Sequential([
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
         nn.Dense(num_bins, kernel_init=nn.initializers.zeros)
     ])
     reward_model = TrainState.create(
@@ -101,8 +103,8 @@ class WorldModel(struct.PyTreeNode):
 
     # Policy model
     policy_module = nn.Sequential([
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
         nn.Dense(2*action_dim,
                  kernel_init=nn.initializers.truncated_normal(0.02))
     ])
@@ -119,9 +121,9 @@ class WorldModel(struct.PyTreeNode):
     # Return/value model (ensemble)
     value_param_key, value_dropout_key = jax.random.split(value_key)
     value_base = partial(nn.Sequential, [
-        NormedLinear(latent_dim, activation=mish,
+        NormedLinear(mlp_dim, activation=mish,
                      dropout_rate=value_dropout, dtype=dtype),
-        NormedLinear(latent_dim, activation=mish, dtype=dtype),
+        NormedLinear(mlp_dim, activation=mish, dtype=dtype),
         nn.Dense(num_bins, kernel_init=nn.initializers.zeros)
     ])
     value_ensemble = Ensemble(value_base, num=num_value_nets)
@@ -143,8 +145,8 @@ class WorldModel(struct.PyTreeNode):
 
     if predict_continues:
       continue_module = nn.Sequential([
-          NormedLinear(latent_dim, activation=mish, dtype=dtype),
-          NormedLinear(latent_dim, activation=mish, dtype=dtype),
+          NormedLinear(mlp_dim, activation=mish, dtype=dtype),
+          NormedLinear(mlp_dim, activation=mish, dtype=dtype),
           nn.Dense(1, kernel_init=nn.initializers.zeros)
       ])
       continue_model = TrainState.create(
@@ -222,6 +224,7 @@ class WorldModel(struct.PyTreeNode):
         continue_model=continue_model,
         # Architecture
         latent_dim=latent_dim,
+        mlp_dim=mlp_dim,
         num_value_nets=num_value_nets,
         num_bins=num_bins,
         symlog_min=float(symlog_min),
@@ -292,6 +295,3 @@ class WorldModel(struct.PyTreeNode):
   
     Q = two_hot_inv(logits, self.symlog_min, self.symlog_max, self.num_bins)
     return Q, logits
-
-
-

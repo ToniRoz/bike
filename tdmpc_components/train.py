@@ -38,6 +38,7 @@ from Environment.wheel_env import WheelEnv
 '''
 Todo:
   add network size parameter for value net (also check what over nets in the hansen code ) to the config 
+  add path to enviroment config like the other two algorithms
 
 '''
 
@@ -60,7 +61,10 @@ def train(cfg: dict):
   # Environment setup
   ##############################
   def make_env(env_config, seed):
-      env = WheelEnv(reward_func="percentage",action_space_selection="continous")  # Your custom wrapper
+      env = WheelEnv(reward_func="normalized",action_space_selection="continous",state_space_selection="rimandspokes")  # Your custom wrapper
+      print("env action space:", env.action_space)
+      print("env reward func:", env.reward_func)
+      print("env observation space:", env.observation_space)
       env = gym.wrappers.RecordEpisodeStatistics(env)
       env = gym.wrappers.Autoreset(env)
       env.action_space.seed(seed)
@@ -113,6 +117,8 @@ def train(cfg: dict):
             compute_flops=True
         )
     )
+
+
 
   ##############################
   # Replay buffer setup
@@ -257,15 +263,15 @@ def train(cfg: dict):
             first_tensions = np.linalg.norm(episode_initial_spoke_tensions[ienv]-800)
             first_turns = np.sum(abs(episode_initial_spoke_turns))
             
-            wheel_change = 100* (final_raw_state_norm - initial_norm) / (abs(initial_norm + 1e-6))
+            wheel_change = 100* (initial_norm - final_raw_state_norm) / (abs(initial_norm + 1e-6))
             turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
             tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
 
             writer.scalar(f'episode/return', r, global_step + ienv)
             writer.scalar(f'episode/length', l, global_step + ienv)
             writer.scalar(f'environment/wheel improvement', wheel_change, global_step + ienv)
-            writer.add_scalar(f'environment/tension improvement', tension_change, global_step + ienv)
-            writer.add_scalar(f'environment/turn improvement', turn_change, global_step + ienv)
+            writer.scalar(f'environment/tension improvement', tension_change, global_step + ienv)
+            writer.scalar(f'environment/turn improvement', turn_change, global_step + ienv)
             ep_count[ienv] += 1
 
       if global_step >= seed_steps:

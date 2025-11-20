@@ -147,6 +147,8 @@ class WheelEnv(gym.Env):
         self.state_space_selection = state_space_selection
 
         self.adjustment_per_turn = 25.4 / 56 / 1000
+        self.reward_func = reward_func
+        
 
 
 
@@ -450,6 +452,9 @@ class WheelEnv(gym.Env):
 # should add a real test here
 """
 env = WheelEnv(reward_func="percentage", action_space_selection="discrete")
+print(env.reward_func)
+print("test")
+
 state, info = env.reset()
 first_turns = np.sum(abs(info['spoke turns']))
 print("start turns:", first_turns)
