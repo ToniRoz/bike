@@ -61,7 +61,7 @@ def train(cfg: dict):
   # Environment setup
   ##############################
   def make_env(env_config, seed):
-      env = WheelEnv(reward_func="normalized",action_space_selection="continous",state_space_selection="rimandspokes")  # Your custom wrapper
+      env = WheelEnv(reward_func="percentage",action_space_selection="continous",state_space_selection="rimandspokes")  # Your custom wrapper
       print("env action space:", env.action_space)
       print("env reward func:", env.reward_func)
       print("env observation space:", env.observation_space)
