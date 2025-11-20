@@ -11,7 +11,17 @@ There are three different Algorithms implemented in this repo: DQN (mostly with 
 
 ## Algorithm Implementation
 
+### DQN (Rainbow)
 
+Was originally taken from this implementation[5]
+
+### PPO
+
+Was originally taken from this implementation[6]
+
+### TDMPC2
+
+Was originally taken from this implementation[7]
 
 ## Usage
 
@@ -21,3 +31,6 @@ There are three different Algorithms implemented in this repo: DQN (mostly with 
 [2][Rainbow Paper](https://arxiv.org/abs/1710.02298)
 [3][PPO Paper](https://arxiv.org/abs/1707.06347)
 [4][TDMPC2](https://www.tdmpc2.com/)
+[5][Rainbow Git](https://github.com/Kaixhin/Rainbow)
+[6][PPO implementation](https://github.com/saqib1707/RL-PPO-PyTorch)
+[7][TDMPC2 implementation](https://github.com/ShaneFlandermeyer/tdmpc2-jax)
