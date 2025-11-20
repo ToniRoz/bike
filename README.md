@@ -19,3 +19,5 @@ There are three different Algorithms implemented in this repo: DQN (mostly with 
 ## References
 [1] [Matthew Ford Github](https://github.com/dashdotrobot)
 [2][Rainbow Paper](https://arxiv.org/abs/1710.02298)
+[3][PPO Paper](https://arxiv.org/abs/1707.06347)
+[4][TDMPC2](https://www.tdmpc2.com/)
