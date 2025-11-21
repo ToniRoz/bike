@@ -261,7 +261,7 @@ def train(cfg: dict):
             
             initial_norm = episode_initial_raw_state_norm[ienv]
             first_tensions = np.linalg.norm(episode_initial_spoke_tensions[ienv]-800)
-            first_turns = np.sum(abs(episode_initial_spoke_turns))
+            first_turns = np.sum(abs(episode_initial_spoke_turns[ienv]))
             
             wheel_change = 100* (initial_norm - final_raw_state_norm) / (abs(initial_norm + 1e-6))
             turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
