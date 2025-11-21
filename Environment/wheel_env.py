@@ -19,6 +19,10 @@ add new state spaces:
                         len theta and n spokes need to be connected to statespace
                         add option for succes reward and tension max (implement to the right units and compare to calc tension)
                         starter tension
+     try changing the end goal to depending on total displacement
+     try adding fourier state
+     get rid of the 800 in tensionstate (and track down where we need to change tracking for it and why tdmpc turns does not work)
+
      a render option would be nice
 """
 
@@ -90,7 +94,7 @@ class WheelEnv(gym.Env):
     def __init__(self,
                  
                 # state space 
-                len_theta=360,
+                len_theta=100,
                 n_spokes=36,
 
                 random_spoke_n = 5,
@@ -132,7 +136,6 @@ class WheelEnv(gym.Env):
         
         super().__init__()
 
-        self.len_theta = len_theta
         self.n_spokes = n_spokes
         self.episode_counter = 0
         self.max_tension = 3 # here we should express this in tension instead of turns and relate it to the calculated tension
@@ -153,7 +156,7 @@ class WheelEnv(gym.Env):
 
 
         # in the following we need to make the state space depending on nspokes and make another input for the number of points
-        self.theta = np.linspace(-np.pi, np.pi, 360)
+        self.theta = np.linspace(-np.pi, np.pi, len_theta)
         self.first_reward = 0
         self.best_reward = 0
 
@@ -162,7 +165,7 @@ class WheelEnv(gym.Env):
             self.observation_space = gym.spaces.Box(
                 low=-50.0, 
                 high=50.0, 
-                shape=(1080,), 
+                shape=(len_theta*3,), 
                 dtype=np.float32
             )
         
@@ -170,7 +173,7 @@ class WheelEnv(gym.Env):
             self.observation_space = gym.spaces.Box(
                 low=-50.0, 
                 high=1200.0, 
-                shape=(1080 + self.n_spokes,), 
+                shape=(len_theta*3 + self.n_spokes,), 
                 dtype=np.float32
             )
 
@@ -378,7 +381,7 @@ class WheelEnv(gym.Env):
             return tensions.astype(np.float32), reward, terminated, truncated, info
         
         if self.state_space_selection == "rimandspokes":
-            combined_state = np.concatenate([wheel_displacement, tensions])
+            combined_state = np.concatenate([wheel_displacement, (tensions-800)/100])
             return combined_state.astype(np.float32), reward, terminated, truncated, info
         
         if self.state_space_selection == "rimpoints":
@@ -487,3 +490,500 @@ state, reward, truncated, terminated, info = env.step(-1)
 print("reward:", reward)
 print(info)
 """
+#!/usr/bin/env python3
+"""
+Test script to analyze WheelEnv state distributions
+Collects statistics on wheel displacement and spoke tensions
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+# Assuming your environment is importable
+# from your_module import WheelEnv
+
+
+def collect_statistics(env, n_episodes=100, steps_per_episode=50):
+    """
+    Collect statistics by taking random actions in the environment.
+    
+    Returns:
+        stats: Dictionary containing all collected statistics
+    """
+    
+    stats = {
+        # Reset statistics
+        'reset_displacement': [],
+        'reset_displacement_flat': [],
+        'reset_tensions': [],
+        'reset_state_norm': [],
+        'reset_tension_mean': [],
+        'reset_tension_std': [],
+        
+        # Step statistics
+        'step_displacement': [],
+        'step_displacement_flat': [],
+        'step_tensions': [],
+        'step_state_norm': [],
+        'step_tension_mean': [],
+        'step_tension_std': [],
+        'step_tension_min': [],
+        'step_tension_max': [],
+        'step_tension_range': [],
+        
+        # Per-spoke statistics
+        'all_spoke_tensions': [],
+        'all_displacements': [],
+        
+        # Rewards
+        'rewards': [],
+        'episode_returns': [],
+    }
+    
+    print(f"Collecting statistics from {n_episodes} episodes...")
+    print(f"Steps per episode: {steps_per_episode}")
+    print("="*60)
+    
+    for episode in range(n_episodes):
+        # Reset environment
+        state, info = env.reset()
+        
+        # Extract displacement and tensions from reset
+        if env.state_space_selection == "rimpoints":
+            displacement = state
+            tensions = info['spoke tensions']
+        elif env.state_space_selection == "rimandspokes":
+            displacement = state[:1080]
+            tensions = state[1080:]
+        elif env.state_space_selection == "spoketensions":
+            displacement = None
+            tensions = state
+        
+        # Store reset statistics
+        if displacement is not None:
+            stats['reset_displacement'].append(displacement)
+            stats['reset_displacement_flat'].extend(displacement.flatten())
+            stats['reset_state_norm'].append(info['raw state norm'])
+        
+        stats['reset_tensions'].append(tensions)
+        stats['reset_tension_mean'].append(tensions.mean())
+        stats['reset_tension_std'].append(tensions.std())
+        stats['all_spoke_tensions'].append(tensions)
+        
+        episode_return = 0
+        
+        # Take random steps
+        for step in range(steps_per_episode):
+            # Random action
+            action = env.action_space.sample()
+            
+            # Step
+            state, reward, terminated, truncated, info = env.step(action)
+            episode_return += reward
+            
+            # Extract displacement and tensions from step
+            if env.state_space_selection == "rimpoints":
+                displacement = state
+                tensions = info['spoke tensions']
+            elif env.state_space_selection == "rimandspokes":
+                displacement = state[:1080]
+                tensions = state[1080:]
+            elif env.state_space_selection == "spoketensions":
+                displacement = None
+                tensions = state
+            
+            # Store step statistics
+            if displacement is not None:
+                stats['step_displacement'].append(displacement)
+                stats['step_displacement_flat'].extend(displacement.flatten())
+                stats['step_state_norm'].append(info['raw state norm'])
+                stats['all_displacements'].append(displacement)
+            
+            stats['step_tensions'].append(tensions)
+            stats['step_tension_mean'].append(tensions.mean())
+            stats['step_tension_std'].append(tensions.std())
+            stats['step_tension_min'].append(tensions.min())
+            stats['step_tension_max'].append(tensions.max())
+            stats['step_tension_range'].append(tensions.max() - tensions.min())
+            stats['all_spoke_tensions'].append(tensions)
+            
+            stats['rewards'].append(reward)
+            
+            if terminated or truncated:
+                break
+        
+        stats['episode_returns'].append(episode_return)
+        
+        if (episode + 1) % 10 == 0:
+            print(f"Episode {episode + 1}/{n_episodes} completed")
+    
+    return stats
+
+
+def analyze_statistics(stats):
+    """
+    Analyze and print statistics in a clear format.
+    """
+    
+    print("\n" + "="*60)
+    print("STATISTICAL ANALYSIS RESULTS")
+    print("="*60)
+    
+    # Convert lists to arrays for easier analysis
+    reset_tensions = np.array(stats['reset_tensions'])
+    step_tensions = np.array(stats['step_tensions'])
+    all_tensions = np.array(stats['all_spoke_tensions'])
+    
+    print("\n" + "-"*60)
+    print("SPOKE TENSIONS ANALYSIS")
+    print("-"*60)
+    
+    print("\n1. AFTER RESET (Initial State):")
+    print(f"   Mean tension:    {reset_tensions.mean():.2f} N")
+    print(f"   Std tension:     {reset_tensions.std():.2f} N")
+    print(f"   Min tension:     {reset_tensions.min():.2f} N")
+    print(f"   Max tension:     {reset_tensions.max():.2f} N")
+    print(f"   Range:           {reset_tensions.max() - reset_tensions.min():.2f} N")
+    print(f"   Median:          {np.median(reset_tensions):.2f} N")
+    print(f"   25th percentile: {np.percentile(reset_tensions, 25):.2f} N")
+    print(f"   75th percentile: {np.percentile(reset_tensions, 75):.2f} N")
+    
+    print("\n2. DURING EPISODES (After Random Actions):")
+    print(f"   Mean tension:    {step_tensions.mean():.2f} N")
+    print(f"   Std tension:     {step_tensions.std():.2f} N")
+    print(f"   Min tension:     {step_tensions.min():.2f} N")
+    print(f"   Max tension:     {step_tensions.max():.2f} N")
+    print(f"   Range:           {step_tensions.max() - step_tensions.min():.2f} N")
+    print(f"   Median:          {np.median(step_tensions):.2f} N")
+    print(f"   25th percentile: {np.percentile(step_tensions, 25):.2f} N")
+    print(f"   75th percentile: {np.percentile(step_tensions, 75):.2f} N")
+    
+    print("\n3. TENSION STATISTICS PER SPOKE (Across All States):")
+    tension_per_spoke = all_tensions.T  # Shape: (n_spokes, n_samples)
+    print(f"   Number of spokes: {tension_per_spoke.shape[0]}")
+    print(f"   Samples per spoke: {tension_per_spoke.shape[1]}")
+    for i in range(min(5, tension_per_spoke.shape[0])):
+        print(f"   Spoke {i}: mean={tension_per_spoke[i].mean():.2f}N, "
+              f"std={tension_per_spoke[i].std():.2f}N, "
+              f"range=[{tension_per_spoke[i].min():.2f}, {tension_per_spoke[i].max():.2f}]N")
+    if tension_per_spoke.shape[0] > 5:
+        print(f"   ... (showing first 5 of {tension_per_spoke.shape[0]} spokes)")
+    
+    # Wheel displacement analysis (if available)
+    if stats['step_displacement_flat']:
+        print("\n" + "-"*60)
+        print("WHEEL DISPLACEMENT ANALYSIS")
+        print("-"*60)
+        
+        reset_disp = np.array(stats['reset_displacement_flat'])
+        step_disp = np.array(stats['step_displacement_flat'])
+        
+        print("\n1. AFTER RESET (Initial State):")
+        print(f"   Mean displacement:    {reset_disp.mean():.6f} m")
+        print(f"   Std displacement:     {reset_disp.std():.6f} m")
+        print(f"   Min displacement:     {reset_disp.min():.6f} m")
+        print(f"   Max displacement:     {reset_disp.max():.6f} m")
+        print(f"   Abs mean:             {np.abs(reset_disp).mean():.6f} m")
+        print(f"   Range:                {reset_disp.max() - reset_disp.min():.6f} m")
+        
+        print("\n2. DURING EPISODES (After Random Actions):")
+        print(f"   Mean displacement:    {step_disp.mean():.6f} m")
+        print(f"   Std displacement:     {step_disp.std():.6f} m")
+        print(f"   Min displacement:     {step_disp.min():.6f} m")
+        print(f"   Max displacement:     {step_disp.max():.6f} m")
+        print(f"   Abs mean:             {np.abs(step_disp).mean():.6f} m")
+        print(f"   Range:                {step_disp.max() - step_disp.min():.6f} m")
+        
+        # State norm analysis
+        reset_norms = np.array(stats['reset_state_norm'])
+        step_norms = np.array(stats['step_state_norm'])
+        
+        print("\n3. STATE NORM (L2 norm of displacement vector):")
+        print(f"   Reset - Mean: {reset_norms.mean():.6f}, Std: {reset_norms.std():.6f}")
+        print(f"   Reset - Range: [{reset_norms.min():.6f}, {reset_norms.max():.6f}]")
+        print(f"   Steps - Mean: {step_norms.mean():.6f}, Std: {step_norms.std():.6f}")
+        print(f"   Steps - Range: [{step_norms.min():.6f}, {step_norms.max():.6f}]")
+    
+    # Reward analysis
+    print("\n" + "-"*60)
+    print("REWARD ANALYSIS")
+    print("-"*60)
+    rewards = np.array(stats['rewards'])
+    returns = np.array(stats['episode_returns'])
+    
+    print(f"\nStep rewards:")
+    print(f"   Mean:   {rewards.mean():.2f}")
+    print(f"   Std:    {rewards.std():.2f}")
+    print(f"   Min:    {rewards.min():.2f}")
+    print(f"   Max:    {rewards.max():.2f}")
+    print(f"   Median: {np.median(rewards):.2f}")
+    
+    print(f"\nEpisode returns:")
+    print(f"   Mean:   {returns.mean():.2f}")
+    print(f"   Std:    {returns.std():.2f}")
+    print(f"   Min:    {returns.min():.2f}")
+    print(f"   Max:    {returns.max():.2f}")
+    print(f"   Median: {np.median(returns):.2f}")
+    
+    return {
+        'reset_tensions': reset_tensions,
+        'step_tensions': step_tensions,
+        'all_tensions': all_tensions,
+        'reset_disp': np.array(stats['reset_displacement_flat']) if stats['reset_displacement_flat'] else None,
+        'step_disp': np.array(stats['step_displacement_flat']) if stats['step_displacement_flat'] else None,
+        'reset_norms': np.array(stats['reset_state_norm']) if stats['reset_state_norm'] else None,
+        'step_norms': np.array(stats['step_state_norm']) if stats['step_state_norm'] else None,
+    }
+
+
+def plot_distributions(arrays_dict, save_path='wheel_env_distributions.png'):
+    """
+    Plot distributions of key variables.
+    """
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    fig.suptitle('WheelEnv State Distributions', fontsize=16, fontweight='bold')
+    
+    # Spoke tensions after reset
+    ax = axes[0, 0]
+    if arrays_dict['reset_tensions'] is not None:
+        ax.hist(arrays_dict['reset_tensions'].flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
+        ax.axvline(arrays_dict['reset_tensions'].mean(), color='red', linestyle='--', linewidth=2, label='Mean')
+        ax.set_xlabel('Spoke Tension (N)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Tensions After Reset')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Spoke tensions during episodes
+    ax = axes[0, 1]
+    if arrays_dict['step_tensions'] is not None:
+        ax.hist(arrays_dict['step_tensions'].flatten(), bins=50, alpha=0.7, color='green', edgecolor='black')
+        ax.axvline(arrays_dict['step_tensions'].mean(), color='red', linestyle='--', linewidth=2, label='Mean')
+        ax.set_xlabel('Spoke Tension (N)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Tensions During Episodes')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Comparison: Reset vs Step tensions
+    ax = axes[0, 2]
+    if arrays_dict['reset_tensions'] is not None and arrays_dict['step_tensions'] is not None:
+        ax.hist(arrays_dict['reset_tensions'].flatten(), bins=50, alpha=0.5, 
+                color='blue', label='Reset', edgecolor='black')
+        ax.hist(arrays_dict['step_tensions'].flatten(), bins=50, alpha=0.5, 
+                color='green', label='Steps', edgecolor='black')
+        ax.set_xlabel('Spoke Tension (N)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Tension Distribution Comparison')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Wheel displacement after reset
+    ax = axes[1, 0]
+    if arrays_dict['reset_disp'] is not None:
+        ax.hist(arrays_dict['reset_disp'], bins=50, alpha=0.7, color='blue', edgecolor='black')
+        ax.axvline(0, color='red', linestyle='--', linewidth=2, label='Zero')
+        ax.set_xlabel('Displacement (m)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Displacement After Reset')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Wheel displacement during episodes
+    ax = axes[1, 1]
+    if arrays_dict['step_disp'] is not None:
+        ax.hist(arrays_dict['step_disp'], bins=50, alpha=0.7, color='green', edgecolor='black')
+        ax.axvline(0, color='red', linestyle='--', linewidth=2, label='Zero')
+        ax.set_xlabel('Displacement (m)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Displacement During Episodes')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # State norms
+    ax = axes[1, 2]
+    if arrays_dict['reset_norms'] is not None and arrays_dict['step_norms'] is not None:
+        ax.hist(arrays_dict['reset_norms'], bins=50, alpha=0.5, 
+                color='blue', label='Reset', edgecolor='black')
+        ax.hist(arrays_dict['step_norms'], bins=50, alpha=0.5, 
+                color='green', label='Steps', edgecolor='black')
+        ax.set_xlabel('State Norm (L2)')
+        ax.set_ylabel('Frequency')
+        ax.set_title('State Norm Distribution')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"\n✓ Plot saved to: {save_path}")
+    plt.show()
+
+
+def suggest_normalization(arrays_dict):
+    """
+    Suggest normalization strategies based on the collected statistics.
+    """
+    
+    print("\n" + "="*60)
+    print("NORMALIZATION RECOMMENDATIONS")
+    print("="*60)
+    
+    # Tension normalization
+    if arrays_dict['step_tensions'] is not None:
+        tensions = arrays_dict['step_tensions'].flatten()
+        t_mean = tensions.mean()
+        t_std = tensions.std()
+        t_min = tensions.min()
+        t_max = tensions.max()
+        
+        print("\n1. SPOKE TENSIONS:")
+        print(f"   Range: [{t_min:.2f}, {t_max:.2f}] N")
+        print(f"   Mean ± Std: {t_mean:.2f} ± {t_std:.2f} N")
+        
+        print("\n   Recommended normalization options:")
+        print(f"\n   Option A: Z-score normalization")
+        print(f"      normalized = (tension - {t_mean:.2f}) / {t_std:.2f}")
+        print(f"      Result range: approximately [-3, +3]")
+        
+        print(f"\n   Option B: Min-Max to [-1, 1]")
+        print(f"      normalized = 2 * (tension - {t_min:.2f}) / {t_max - t_min:.2f} - 1")
+        print(f"      Result range: exactly [-1, +1]")
+        
+        print(f"\n   Option C: Deviation from nominal (assuming 800N nominal)")
+        nominal = 800
+        print(f"      normalized = (tension - {nominal}) / {t_std:.2f}")
+        print(f"      Centers around 0 for nominal tension")
+        
+        print(f"\n   Option D: Percentage deviation from nominal")
+        print(f"      normalized = (tension - {nominal}) / {nominal}")
+        print(f"      Result is fractional change from nominal")
+    
+    # Displacement normalization
+    if arrays_dict['step_disp'] is not None:
+        disp = arrays_dict['step_disp']
+        d_mean = disp.mean()
+        d_std = disp.std()
+        d_min = disp.min()
+        d_max = disp.max()
+        d_abs_mean = np.abs(disp).mean()
+        
+        print("\n2. WHEEL DISPLACEMENT:")
+        print(f"   Range: [{d_min:.6f}, {d_max:.6f}] m")
+        print(f"   Mean ± Std: {d_mean:.6f} ± {d_std:.6f} m")
+        print(f"   Abs mean: {d_abs_mean:.6f} m")
+        
+        print("\n   Recommended normalization options:")
+        print(f"\n   Option A: Z-score normalization")
+        print(f"      normalized = (displacement - {d_mean:.6f}) / {d_std:.6f}")
+        print(f"      Result range: approximately [-3, +3]")
+        
+        print(f"\n   Option B: Division by std only (already ~centered at 0)")
+        print(f"      normalized = displacement / {d_std:.6f}")
+        print(f"      Preserves zero-centering")
+        
+        print(f"\n   Option C: Scale by typical magnitude")
+        print(f"      normalized = displacement / {d_abs_mean:.6f}")
+        print(f"      Based on typical absolute displacement")
+    
+    # Combined state
+    if arrays_dict['step_tensions'] is not None and arrays_dict['step_disp'] is not None:
+        print("\n3. COMBINED STATE (displacement + tensions):")
+        print("\n   ⚠️  WARNING: Very different scales!")
+        print(f"      Displacement std: {arrays_dict['step_disp'].std():.6f} m")
+        print(f"      Tension std:      {arrays_dict['step_tensions'].std():.2f} N")
+        print(f"      Ratio: {arrays_dict['step_tensions'].std() / arrays_dict['step_disp'].std():.1e}")
+        
+        print("\n   Recommended approach:")
+        print("      1. Normalize displacement: disp / disp_std")
+        print("      2. Normalize tensions: (tension - 800) / tension_std")
+        print("      3. Concatenate normalized values")
+        print("\n   This ensures both contribute equally to gradients.")
+    
+    print("\n" + "="*60)
+    print("CODE SNIPPETS FOR NORMALIZATION")
+    print("="*60)
+    
+    if arrays_dict['step_tensions'] is not None:
+        t_mean = arrays_dict['step_tensions'].mean()
+        t_std = arrays_dict['step_tensions'].std()
+        print("\n# Tension normalization (add to your environment):")
+        print(f"tensions_normalized = (tensions - {t_mean:.2f}) / {t_std:.2f}")
+        print("# Or deviation from nominal:")
+        print(f"tensions_normalized = (tensions - 800.0) / {t_std:.2f}")
+    
+    if arrays_dict['step_disp'] is not None:
+        d_std = arrays_dict['step_disp'].std()
+        print("\n# Displacement normalization:")
+        print(f"displacement_normalized = displacement / {d_std:.6f}")
+    
+    if arrays_dict['step_tensions'] is not None and arrays_dict['step_disp'] is not None:
+        print("\n# Combined state normalization:")
+        print(f"""
+displacement_norm = displacement / {arrays_dict['step_disp'].std():.6f}
+tensions_norm = (tensions - 800.0) / {arrays_dict['step_tensions'].std():.2f}
+state = np.concatenate([displacement_norm, tensions_norm])
+""")
+
+
+def main():
+    """
+    Main function to run the test.
+    """
+    
+    # Import your environment here
+    # Replace with your actual import
+    try:
+        from wheel_env import WheelEnv  # Adjust this import!
+    except ImportError:
+        print("ERROR: Could not import WheelEnv")
+        print("Please adjust the import statement in this script")
+        return
+    
+    print("\n" + "="*60)
+    print("WHEELENV STATE STATISTICS TEST")
+    print("="*60)
+    
+    # Test different state space configurations
+    state_configs = [
+        "rimpoints",
+        "rimandspokes",
+        # "spoketensions",  # Uncomment if you want to test this too
+    ]
+    
+    for state_space in state_configs:
+        print(f"\n\n{'='*60}")
+        print(f"TESTING: state_space_selection = '{state_space}'")
+        print(f"{'='*60}\n")
+        
+        # Create environment
+        env = WheelEnv(
+            state_space_selection=state_space,
+            action_space_selection="discrete",
+            random_spoke_n=5,
+            random_spoke_turns_max=2,
+        )
+        
+        # Collect statistics
+        stats = collect_statistics(env, n_episodes=100, steps_per_episode=50)
+        
+        # Analyze
+        arrays_dict = analyze_statistics(stats)
+        
+        # Plot
+        plot_name = f'wheel_env_distributions_{state_space}.png'
+        plot_distributions(arrays_dict, save_path=plot_name)
+        
+        # Suggestions
+        suggest_normalization(arrays_dict)
+        
+        env.close()
+    
+    print("\n" + "="*60)
+    print("TEST COMPLETE!")
+    print("="*60)
+
+
+if __name__ == "__main__":
+    main()
