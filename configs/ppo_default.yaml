@@ -26,6 +26,14 @@ lr_actor: 0.0003
 lr_critic: 0.001
 activation: tanh
 
+# recurrent
+use_recurrent: true
+recurrent_type: 'gru' # lstm or gru
+recurrent_hidden_dim: 256         # Larger for complex task
+recurrent_layers: 2               # 2 layers for better learning
+recurrent_sequence_length: 3     
+recurrent_dropout: 0.1            # Dropout between layers
+
 # Action space
 continuous_action_space: false
 action_std_init: 0.1

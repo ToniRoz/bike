@@ -465,15 +465,7 @@ class RolloutBuffer:
         self.dones = []
         self.state_values = []
 
-    def clear(self):
-        del self.states[:]
-        del self.actions[:]
-        del self.logprobs[:]
-        del self.rewards[:]
-        del self.dones[:]
-        del self.state_values[:]
-
-    def store_transition(self, state, action, logprob, reward, done, state_value):
+    def add(self, state, action, logprob, reward, done, state_value):
         self.states.append(state)
         self.actions.append(action)
         self.logprobs.append(logprob)
@@ -481,23 +473,89 @@ class RolloutBuffer:
         self.dones.append(done)
         self.state_values.append(state_value)
 
+    def clear(self):
+        self.states.clear()
+        self.actions.clear()
+        self.logprobs.clear()
+        self.rewards.clear()
+        self.dones.clear()
+        self.state_values.clear()
+
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim, action_dim, hidden_dim, continuous_action_space=False, action_std_init=0.6, device='cpu'):
+    """
+    Actor-Critic network with optional recurrent support
+    """
+    def __init__(
+        self, 
+        obs_dim, 
+        action_dim, 
+        hidden_dim, 
+        continuous_action_space=False, 
+        action_std_init=0.6,
+        device='cpu',
+        # NEW: Recurrent parameters
+        use_recurrent=False,
+        recurrent_type='lstm',
+        recurrent_hidden_dim=128,
+        recurrent_layers=1,
+        recurrent_dropout=0.0
+    ):
         super(ActorCritic, self).__init__()
 
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.continuous_action_space = continuous_action_space
         self.device = device
+        
+        # NEW: Recurrent parameters
+        self.use_recurrent = use_recurrent
+        self.recurrent_type = recurrent_type
+        self.recurrent_hidden_dim = recurrent_hidden_dim
+        self.recurrent_layers = recurrent_layers
 
+        if use_recurrent:
+            print(f"[ActorCritic] Creating RECURRENT network:")
+            print(f"      - Recurrent type: {recurrent_type}")
+            print(f"      - Recurrent hidden dim: {recurrent_hidden_dim}")
+            print(f"      - Recurrent layers: {recurrent_layers}")
+            
+            # Create recurrent layer
+            if recurrent_type == 'lstm':
+                self.recurrent = nn.LSTM(
+                    input_size=obs_dim,
+                    hidden_size=recurrent_hidden_dim,
+                    num_layers=recurrent_layers,
+                    batch_first=True,
+                    dropout=recurrent_dropout if recurrent_layers > 1 else 0.0
+                )
+            elif recurrent_type == 'gru':
+                self.recurrent = nn.GRU(
+                    input_size=obs_dim,
+                    hidden_size=recurrent_hidden_dim,
+                    num_layers=recurrent_layers,
+                    batch_first=True,
+                    dropout=recurrent_dropout if recurrent_layers > 1 else 0.0
+                )
+            else:
+                raise ValueError(f"Unknown recurrent type: {recurrent_type}")
+            
+            # Feature extractor takes recurrent output
+            feature_input_dim = recurrent_hidden_dim
+            self.hidden_state = None
+        else:
+            print(f"[ActorCritic] Creating STANDARD network")
+            feature_input_dim = obs_dim
+
+        # Feature extractor
         self.feature_extractor = nn.Sequential(
-            nn.Linear(obs_dim, hidden_dim, dtype=torch.float32),
+            nn.Linear(feature_input_dim, hidden_dim, dtype=torch.float32),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32),
             nn.Tanh()
         ).to(device)
 
+        # Actor head
         if continuous_action_space:
             self.action_var = nn.Parameter(torch.full(size=(action_dim,), fill_value=action_std_init * action_std_init)).to(device)
             self.actor_head = nn.Linear(hidden_dim, action_dim, dtype=torch.float32).to(device)
@@ -507,47 +565,101 @@ class ActorCritic(nn.Module):
                 nn.Softmax(dim=-1)
             ).to(device)
 
+        # Critic head
         self.critic_head = nn.Linear(hidden_dim, 1).to(device)
 
-
-    def forward(self, obs):
-        features = self.feature_extractor(obs)
+    def forward(self, obs, hidden_state=None, mask=None):
+        """
+        Forward pass - handles both recurrent and non-recurrent cases
+        
+        Args:
+            obs: Observations (batch_size, obs_dim) or (batch_size, seq_len, obs_dim)
+            hidden_state: Optional hidden state for recurrent networks
+            mask: Optional mask for variable length sequences
+        """
+        batch_size = obs.size(0)
+        
+        if self.use_recurrent:
+            # Add sequence dimension if needed
+            if obs.dim() == 2:
+                obs = obs.unsqueeze(1)  # (batch_size, 1, obs_dim)
+            
+            # Process through recurrent layer
+            if self.recurrent_type == 'lstm':
+                if hidden_state is None:
+                    h0 = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+                    c0 = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+                    hidden_state = (h0, c0)
+                rnn_out, new_hidden_state = self.recurrent(obs, hidden_state)
+            else:  # GRU
+                if hidden_state is None:
+                    hidden_state = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+                rnn_out, new_hidden_state = self.recurrent(obs, hidden_state)
+            
+            # Get last timestep output
+            if mask is not None:
+                lengths = mask.sum(dim=1).long() - 1
+                lengths = lengths.clamp(min=0)
+                idx = lengths.unsqueeze(1).unsqueeze(2).expand(batch_size, 1, self.recurrent_hidden_dim)
+                features_input = rnn_out.gather(1, idx).squeeze(1)
+            else:
+                features_input = rnn_out[:, -1, :]
+            
+            # Process through feature extractor
+            features = self.feature_extractor(features_input)
+        else:
+            # Standard forward pass
+            features = self.feature_extractor(obs)
+            new_hidden_state = None
+        
+        # Actor and critic outputs
         actor_out = self.actor_head(features)
         critic_out = self.critic_head(features)
-        return actor_out, critic_out
+        
+        return actor_out, critic_out, new_hidden_state
 
-
-    def select_action(self, obs):
+    def select_action(self, obs, hidden_state=None, deterministic=False):
+        """Select action - handles both recurrent and non-recurrent"""
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float32).to(self.device)
 
         if obs.dim() == 1:
-            obs = obs.unsqueeze(0)    # add batch dimension if missing
+            obs = obs.unsqueeze(0)
 
-        # to prevent unnecessary gradient computation
         with torch.no_grad():
-            action_out, value = self.forward(obs)
+            action_out, value, new_hidden_state = self.forward(obs, hidden_state)
 
             if self.continuous_action_space:
-                action_cov = torch.diag(self.action_var)
-                dist = MultivariateNormal(action_out, action_cov)
-            else:
-                dist = Categorical(action_out)
+                if deterministic:
+                    action = action_out
+                    action_cov = torch.diag(self.action_var)
+                    dist = MultivariateNormal(action_out, action_cov)
+                    action_logprob = dist.log_prob(action)
+                else:
+                    action_cov = torch.diag(self.action_var)
+                    dist = MultivariateNormal(action_out, action_cov)
+                    action = dist.sample()
+                    action_logprob = dist.log_prob(action)
 
-            action = dist.sample()
-            action_logprob = dist.log_prob(action)
-
-            if self.continuous_action_space:
                 if action.dim() == 2 and action.shape[0] == 1:
                     action = action.squeeze(0).cpu().numpy()
             else:
+                dist = Categorical(action_out)
+                if deterministic:
+                    action = action_out.argmax(dim=-1)
+                else:
+                    action = dist.sample()
+                action_logprob = dist.log_prob(action)
                 action = action.item()
 
-        return action, action_logprob.cpu().numpy(), value.item()
+        if self.use_recurrent:
+            return action, action_logprob.cpu().numpy(), value.item(), new_hidden_state
+        else:
+            return action, action_logprob.cpu().numpy(), value.item()
 
-
-    def evaluate_actions(self, states, actions):
-        action_out, values = self.forward(states)
+    def evaluate_actions(self, states, actions, hidden_states=None, masks=None):
+        """Evaluate actions for PPO update"""
+        action_out, values, _ = self.forward(states, hidden_states, masks)
 
         if self.continuous_action_space:
             action_cov = torch.diag(self.action_var)
@@ -556,9 +668,25 @@ class ActorCritic(nn.Module):
         else:
             dist = Categorical(action_out)
             action_logprobs = dist.log_prob(actions.squeeze(-1).long())
+        
         dist_entropy = dist.entropy()
 
         return values.squeeze(), action_logprobs, dist_entropy
+    
+    def reset_hidden_state(self, batch_size=1):
+        """Reset hidden state for recurrent networks"""
+        if not self.use_recurrent:
+            return None
+            
+        if self.recurrent_type == 'lstm':
+            h0 = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+            c0 = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+            self.hidden_state = (h0, c0)
+        else:  # GRU
+            self.hidden_state = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)
+        
+        return self.hidden_state
+
 
 
 class PPOAgent:
@@ -578,7 +706,14 @@ class PPOAgent:
             value_loss_coef=0.5,
             batch_size=64,
             max_grad_norm=0.5,
-            device='cpu'
+            device='cpu',
+            # NEW: Recurrent parameters
+            use_recurrent=False,
+            recurrent_type='lstm',
+            recurrent_hidden_dim=128,
+            recurrent_layers=1,
+            recurrent_sequence_length=16,
+            recurrent_dropout=0.0
         ):
         self.gamma = gamma
         self.num_epochs = num_epochs
@@ -586,6 +721,7 @@ class PPOAgent:
         self.eps_clip = eps_clip
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
+        self.max_grad_norm = max_grad_norm
 
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -593,6 +729,23 @@ class PPOAgent:
         self.continuous_action_space = continuous_action_space
         self.device = device
 
+        # NEW: Recurrent settings
+        self.use_recurrent = use_recurrent
+        self.recurrent_sequence_length = recurrent_sequence_length
+        self.recurrent_type = recurrent_type
+
+        print(f"\n[PPOAgent] Initializing {'RECURRENT' if use_recurrent else 'STANDARD'} PPO agent")
+        if use_recurrent:
+            print(f"      - Recurrent type: {recurrent_type}")
+            print(f"      - Sequence length: {recurrent_sequence_length}")
+            print(f"      - Recurrent hidden dim: {recurrent_hidden_dim}")
+            print(f"      - Recurrent layers: {recurrent_layers}")
+            
+            # Initialize observation history buffer
+            self.obs_history = deque(maxlen=recurrent_sequence_length)
+            self.current_hidden_state = None
+
+        # Create policy network (with conditional recurrent support)
         self.policy = ActorCritic(
             obs_dim, 
             action_dim, 
@@ -600,6 +753,12 @@ class PPOAgent:
             continuous_action_space=continuous_action_space,
             action_std_init=action_std_init,
             device=device,
+            # Pass recurrent parameters
+            use_recurrent=use_recurrent,
+            recurrent_type=recurrent_type,
+            recurrent_hidden_dim=recurrent_hidden_dim,
+            recurrent_layers=recurrent_layers,
+            recurrent_dropout=recurrent_dropout
         )
 
         self.optimizer = torch.optim.Adam([
@@ -609,10 +768,58 @@ class PPOAgent:
         ])
 
         self.buffer = RolloutBuffer()
-        self.mse_loss = nn.MSELoss()  # Initialize MSE loss
+        self.mse_loss = nn.MSELoss()
 
+    def reset_episode(self):
+        """Reset episode-specific state (important for recurrent networks!)"""
+        if self.use_recurrent:
+            self.obs_history.clear()
+            self.current_hidden_state = self.policy.reset_hidden_state(batch_size=1)
+
+    def select_action(self, obs, deterministic=False):
+        """
+        Select action - automatically handles recurrent vs standard
+        
+        Args:
+            obs: Current observation
+            deterministic: If True, select deterministic action
+            
+        Returns:
+            action, log_prob, value (same interface as before)
+        """
+        if self.use_recurrent:
+            # Convert observation to tensor
+            if isinstance(obs, np.ndarray):
+                obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
+            else:
+                obs_tensor = obs
+            
+            # Add to history
+            self.obs_history.append(obs_tensor)
+            
+            # Pad if needed
+            while len(self.obs_history) < self.recurrent_sequence_length:
+                self.obs_history.insert(0, torch.zeros_like(obs_tensor))
+            
+            # Stack into sequence
+            obs_seq = torch.stack(list(self.obs_history)).unsqueeze(0)  # (1, seq_len, obs_dim)
+            
+            # Select action with hidden state
+            result = self.policy.select_action(obs_seq, self.current_hidden_state, deterministic)
+            
+            if len(result) == 4:  # Recurrent returns 4 values
+                action, log_prob, value, self.current_hidden_state = result
+            else:  # Should not happen but handle gracefully
+                action, log_prob, value = result
+        else:
+            # Standard action selection
+            result = self.policy.select_action(obs, deterministic=deterministic)
+            action, log_prob, value = result
+        
+        return action, log_prob, value
 
     def compute_returns(self):
+        """Compute discounted returns (unchanged)"""
         returns = []
         discounted_reward = 0
 
@@ -626,8 +833,8 @@ class PPOAgent:
         returns = torch.flatten(torch.from_numpy(returns).float()).to(self.device)
         return returns
 
-
     def update_policy(self):
+        """Update policy using PPO (handles both recurrent and standard)"""
         rewards_to_go = self.compute_returns()
 
         states = torch.from_numpy(np.array(self.buffer.states)).float().to(self.device)
@@ -639,7 +846,7 @@ class PPOAgent:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-6)
 
         for _ in range(self.num_epochs):
-            # generate random indices for minibatch
+            # Generate random indices for minibatch
             indices = np.random.permutation(len(self.buffer.states))
 
             for start_idx in range(0, len(states), self.batch_size):
@@ -652,8 +859,18 @@ class PPOAgent:
                 batch_advantages = advantages[batch_indices]
                 batch_rewards_to_go = rewards_to_go[batch_indices]
                 
-                # evaluate old actions and values
-                state_values, logprobs, dist_entropy = self.policy.evaluate_actions(batch_states, batch_actions)
+                # Evaluate old actions and values
+                if self.use_recurrent:
+                    # Add sequence dimension for recurrent processing
+                    state_values, logprobs, dist_entropy = self.policy.evaluate_actions(
+                        batch_states.unsqueeze(1),  # Add seq_len dimension
+                        batch_actions
+                    )
+                else:
+                    state_values, logprobs, dist_entropy = self.policy.evaluate_actions(
+                        batch_states, 
+                        batch_actions
+                    )
 
                 # Finding the ratio (pi_theta / pi_theta_old)
                 ratios = torch.exp(logprobs - batch_old_logprobs.squeeze(-1))
@@ -662,14 +879,127 @@ class PPOAgent:
                 surr1 = ratios * batch_advantages
                 surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * batch_advantages
 
-                # final loss of clipped objective PPO
+                # Final loss of clipped objective PPO
                 actor_loss = -torch.min(surr1, surr2).mean()
                 critic_loss = 0.5 * self.mse_loss(state_values.squeeze(), batch_rewards_to_go)
                 loss = actor_loss + self.value_loss_coef * critic_loss - self.entropy_coef * dist_entropy.mean()
 
-                # calculate gradients and backpropagate for actor network
+                # Calculate gradients and backpropagate
                 self.optimizer.zero_grad()
                 loss.backward()
+                
+                # Gradient clipping (important for recurrent networks)
+                if self.max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                
                 self.optimizer.step()
         
         self.buffer.clear()
+
+    def save(self, path):
+        """Save model checkpoint"""
+        checkpoint = {
+            'policy': self.policy.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'config': {
+                'obs_dim': self.obs_dim,
+                'action_dim': self.action_dim,
+                'use_recurrent': self.use_recurrent,
+                'continuous_action_space': self.continuous_action_space,
+            }
+        }
+        
+        if self.use_recurrent:
+            checkpoint['config'].update({
+                'recurrent_type': self.recurrent_type,
+                'recurrent_sequence_length': self.recurrent_sequence_length,
+            })
+        
+        torch.save(checkpoint, path)
+        print(f"[PPOAgent] Model saved to {path}")
+
+    def load(self, path, load_optimizer=True):
+        """Load model checkpoint"""
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.policy.load_state_dict(checkpoint['policy'])
+        
+        if load_optimizer and 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        
+        print(f"[PPOAgent] Model loaded from {path}")
+
+    def evaluate(self, env, num_episodes=10, deterministic=True, render=False, max_steps=None):
+        """
+        Evaluate the agent
+        
+        Args:
+            env: Gym environment
+            num_episodes: Number of episodes to evaluate
+            deterministic: Use deterministic policy
+            render: Whether to render
+            max_steps: Maximum steps per episode
+            
+        Returns:
+            dict with evaluation metrics
+        """
+        self.policy.eval()
+        
+        episode_rewards = []
+        episode_lengths = []
+        
+        for episode in range(num_episodes):
+            obs, _ = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
+            self.reset_episode()  # Important for recurrent networks!
+            
+            episode_reward = 0
+            episode_length = 0
+            done = False
+            
+            while not done:
+                if render:
+                    env.render()
+                
+                # Select action
+                action, _, _ = self.select_action(obs, deterministic=deterministic)
+                
+                # Take action
+                step_result = env.step(action)
+                if len(step_result) == 5:
+                    next_obs, reward, terminated, truncated, info = step_result
+                    done = terminated or truncated
+                else:
+                    next_obs, reward, done, info = step_result
+                
+                episode_reward += reward
+                episode_length += 1
+                obs = next_obs
+                
+                if max_steps is not None and episode_length >= max_steps:
+                    break
+            
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(episode_length)
+            
+            if (episode + 1) % max(1, num_episodes // 10) == 0:
+                print(f"  Episode {episode + 1}/{num_episodes}: "
+                      f"Reward = {episode_reward:.2f}, Length = {episode_length}")
+        
+        self.policy.train()
+        
+        results = {
+            'mean_reward': np.mean(episode_rewards),
+            'std_reward': np.std(episode_rewards),
+            'min_reward': np.min(episode_rewards),
+            'max_reward': np.max(episode_rewards),
+            'mean_length': np.mean(episode_lengths),
+            'episode_rewards': episode_rewards,
+            'episode_lengths': episode_lengths
+        }
+        
+        print(f"\n[Evaluation Results]")
+        print(f"  Mean Reward: {results['mean_reward']:.2f} ± {results['std_reward']:.2f}")
+        print(f"  Min/Max Reward: {results['min_reward']:.2f} / {results['max_reward']:.2f}")
+        print(f"  Mean Episode Length: {results['mean_length']:.1f}")
+        
+        return results

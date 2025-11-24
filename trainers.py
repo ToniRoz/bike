@@ -338,20 +338,17 @@ class RainbowTrainer(BaseTrainer):
         self._evaluate_agent(0)
 
 class PPOTrainer(BaseTrainer):
-    """Trainer for PPO"""
+    """Trainer for PPO with recurrent network support"""
     
     def __init__(self, config: PPOConfig, env, writer=None):
         super().__init__(config, env, writer)
-        
-        # Setup checkpoint directory
-        #Path(config.ckpt_dir).mkdir(parents=True, exist_ok=True)
         
         # Get environment dimensions
         obs_dim = env.observation_space.shape[0]
         action_dim = (env.action_space.shape[0] if config.continuous_action_space 
                      else env.action_space.n)
         
-        # Create agent
+        # Create agent with recurrent support
         self.agent = PPOAgent(
             obs_dim=obs_dim,
             action_dim=action_dim,
@@ -368,10 +365,17 @@ class PPOTrainer(BaseTrainer):
             batch_size=config.batch_size,
             max_grad_norm=config.max_grad_norm,
             device=config.device,
+            # NEW: Pass recurrent parameters from config
+            use_recurrent=getattr(config, 'use_recurrent', False),
+            recurrent_type=getattr(config, 'recurrent_type', 'lstm'),
+            recurrent_hidden_dim=getattr(config, 'recurrent_hidden_dim', 128),
+            recurrent_layers=getattr(config, 'recurrent_layers', 1),
+            recurrent_sequence_length=getattr(config, 'recurrent_sequence_length', 16),
+            recurrent_dropout=getattr(config, 'recurrent_dropout', 0.0),
         )
     
     def train(self):
-        """Main training loop"""
+        """Main training loop with recurrent support"""
         self.log(f"Starting PPO training for {self.config.num_train_steps} steps")
         
         t_so_far = 0
@@ -382,6 +386,10 @@ class PPOTrainer(BaseTrainer):
         while t_so_far < self.config.num_train_steps:
             # Reset environment
             obs, info = self.env.reset(seed=self.config.random_seed)
+            
+            # NEW: Reset episode state (important for recurrent networks!)
+            self.agent.reset_episode()
+            
             first_state_norm = info['raw state norm']
             first_tensions = np.linalg.norm(info['spoke tensions']-800)
             first_turns = np.sum(abs(info['spoke turns']))
@@ -392,8 +400,8 @@ class PPOTrainer(BaseTrainer):
             
             # Collect trajectory
             for step in range(1, self.config.max_eps_steps + 1):
-                # Select action
-                action, logprob, value = self.agent.policy.select_action(obs)
+                # Select action (automatically handles recurrent vs standard)
+                action, logprob, value = self.agent.select_action(obs)
                 
                 # Take step
                 next_obs, reward, done, truncated, info = self.env.step(action)
@@ -407,7 +415,7 @@ class PPOTrainer(BaseTrainer):
                 eps_length += 1
                 
                 # Store transition
-                self.agent.buffer.store_transition(obs, action, logprob, reward, done, value)
+                self.agent.buffer.add(obs, action, logprob, reward, done, value)
                 
                 # Update policy
                 if t_so_far % self.config.update_interval == 0:
@@ -427,11 +435,12 @@ class PPOTrainer(BaseTrainer):
                     turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
                     tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
 
-                    self.writer.add_scalar(f'episode/return', eps_reward, t_so_far)
-                    self.writer.add_scalar(f'episode/length', step_counter, t_so_far)
-                    self.writer.add_scalar(f'environment/wheel improvement', wheel_change, t_so_far)
-                    self.writer.add_scalar(f'environment/turn improvement', turn_change, t_so_far)
-                    self.writer.add_scalar(f'environment/tension improvement', tension_change, t_so_far)
+                    if self.writer:
+                        self.writer.add_scalar(f'episode/return', eps_reward, t_so_far)
+                        self.writer.add_scalar(f'episode/length', step_counter, t_so_far)
+                        self.writer.add_scalar(f'environment/wheel improvement', wheel_change, t_so_far)
+                        self.writer.add_scalar(f'environment/turn improvement', turn_change, t_so_far)
+                        self.writer.add_scalar(f'environment/tension improvement', tension_change, t_so_far)
                     
                     break
             
@@ -450,13 +459,13 @@ class PPOTrainer(BaseTrainer):
         self.log("Training completed!")
     
     def save_checkpoint(self, path, step):
-        """Save checkpoint"""
+        """Save checkpoint using agent's save method"""
         ckpt_path = os.path.join(path, f"{self.config.env_name}_step_{step}.pt")
-        torch.save(self.agent.policy.state_dict(), ckpt_path)
+        self.agent.save(ckpt_path)
         self.log(f"Checkpoint saved at step {step}")
     
     def evaluate(self):
-        """Run evaluation"""
+        """Run evaluation with recurrent support"""
         self.log("Running PPO evaluation...")
         
         # Load checkpoint
@@ -464,8 +473,7 @@ class PPOTrainer(BaseTrainer):
         if not os.path.exists(ckpt_path):
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         
-        ckpt = torch.load(ckpt_path, map_location=self.config.device)
-        self.agent.policy.load_state_dict(ckpt)
+        self.agent.load(ckpt_path, load_optimizer=False)
         self.agent.policy.eval()
         
         metrics = {
@@ -480,6 +488,10 @@ class PPOTrainer(BaseTrainer):
         with torch.no_grad():
             for ep in range(self.config.num_eval_eps):
                 obs, _ = self.env.reset()
+                
+                # NEW: Reset episode state for recurrent networks
+                self.agent.reset_episode()
+                
                 eps_reward = 0
                 eps_length = 0
                 
@@ -487,7 +499,8 @@ class PPOTrainer(BaseTrainer):
                     if self.config.render_mode:
                         self.env.render()
                     
-                    action, _, _ = self.agent.policy.select_action(obs)
+                    # Use agent's select_action (handles recurrent automatically)
+                    action, _, _ = self.agent.select_action(obs, deterministic=True)
                     obs, reward, done, _, _ = self.env.step(action)
                     
                     eps_reward += reward
@@ -517,4 +530,3 @@ class PPOTrainer(BaseTrainer):
         self.log("="*50)
         
         return metrics
-
