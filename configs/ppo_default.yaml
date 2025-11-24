@@ -7,7 +7,7 @@ random_seed: 42
 exp_name: ppo_wheel_experiment
 
 # Training parameters
-num_train_steps: 500000
+num_train_steps: 1000000
 max_eps_steps: 1500
 update_interval: 1000
 
@@ -27,7 +27,7 @@ lr_critic: 0.001
 activation: tanh
 
 # recurrent
-use_recurrent: true
+use_recurrent: false
 recurrent_type: 'gru' # lstm or gru
 recurrent_hidden_dim: 256         # Larger for complex task
 recurrent_layers: 2               # 2 layers for better learning
