@@ -1,3 +1,6 @@
+defaults:
+  - env: wheel
+
 hydra:
   job:
     name: ${env.env_id}_s${seed}

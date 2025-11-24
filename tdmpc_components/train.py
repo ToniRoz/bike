@@ -15,6 +15,7 @@ import tensorflow as tf
 import tqdm
 from flax.metrics import tensorboard
 from flax.training.train_state import TrainState
+from omegaconf import OmegaConf
 
 from tdmpc2 import TDMPC2
 from world_model import WorldModel
@@ -38,9 +39,7 @@ from Environment.wheel_env import WheelEnv
 '''
 Todo:
   add network size parameter for value net (also check what over nets in the hansen code ) to the config 
-  add path to enviroment config like the other two algorithms
-  fix: why does reward mess up? reward should never be positive in the last exp i ran with this
-  could be because initialization through config does not work in here
+
 
 '''
 
@@ -57,16 +56,55 @@ def train(cfg: dict):
   ##############################
   output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
   writer = tensorboard.SummaryWriter(os.path.join(output_dir, 'tensorboard'))
-  writer.hparams(cfg)
+  
+  # Save complete config (including env params from wheel.yaml)
+  config_dict = OmegaConf.to_container(cfg, resolve=True)
+  writer.hparams(config_dict)
+  
+  # Save config as YAML file
+  config_save_path = os.path.join(output_dir, 'config.yaml')
+  with open(config_save_path, 'w') as f:
+    OmegaConf.save(cfg, f)
+  print(f"Configuration saved to: {config_save_path}")
+  
+  # Print the full configuration
+  print("\n" + "="*80)
+  print("FULL CONFIGURATION")
+  print("="*80)
+  print(OmegaConf.to_yaml(cfg))
+  print("="*80 + "\n")
 
   ##############################
   # Environment setup
   ##############################
   def make_env(env_config, seed):
-      env = WheelEnv(reward_func="raw",action_space_selection="continous",state_space_selection="rimpoints")  # Your custom wrapper
-      print("env action space:", env.action_space)
-      print("env reward func:", env.reward_func)
-      print("env observation space:", env.observation_space)
+      # Extract wheel-specific parameters from config
+      wheel_params = {
+          'reward_func': env_config.get('reward_func', 'raw'),
+          'action_space_selection': env_config.get('action_space_selection', 'continous'),
+          'state_space_selection': env_config.get('state_space_selection', 'rimpoints'),
+      }
+      
+      # Add other wheel parameters if they exist in config
+      for key in ['len_theta', 'n_spokes', 'hub_width', 'hub_diameter', 'rim_radius', 
+                  'rim_area', 'rim_I_lat', 'rim_I_rad', 'rim_J_tor', 'rim_young_mod', 
+                  'rim_shear_mod', 'rim_I_warp', 'spokes_crossings', 'spokes_diameter', 
+                  'spokes_young_mod', 'number_modes', 'init_tension']:
+          if key in env_config:
+              wheel_params[key] = env_config[key]
+      
+      env = WheelEnv(**wheel_params)
+      
+      print("\n" + "-"*80)
+      print("ENVIRONMENT INITIALIZATION")
+      print("-"*80)
+      print(f"Action space: {env.action_space}")
+      print(f"Observation space: {env.observation_space}")
+      print(f"Reward function: {env.reward_func}")
+      print(f"Action space selection: {wheel_params['action_space_selection']}")
+      print(f"State space selection: {wheel_params['state_space_selection']}")
+      print("-"*80 + "\n")
+      
       env = gym.wrappers.RecordEpisodeStatistics(env)
       env = gym.wrappers.Autoreset(env)
       env.action_space.seed(seed)
