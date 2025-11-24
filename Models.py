@@ -18,7 +18,7 @@ Todo:
 
 
 
-# Factorised NoisyLinear layer with bias (keep as is)
+# Factorised NoisyLinear layer with bias 
 class NoisyLinear(nn.Module):
     def __init__(self, in_features, out_features, std_init=0.5):
         super(NoisyLinear, self).__init__()
@@ -182,6 +182,152 @@ class DQN(nn.Module):
                 module.reset_noise()
 
 
+class RecurrentDQN(nn.Module):
+    """
+    Recurrent Rainbow DQN with IQN (Implicit Quantile Network)
+    Takes sequences of (state, action) pairs as input
+    """
+    def __init__(self, args, action_space, state_dim):
+        super(RecurrentDQN, self).__init__()
+        self.action_space = action_space
+        self.state_dim = state_dim
+        self.recurrent_hidden_size = args.recurrent_hidden_size
+        self.recurrent_type = args.recurrent_type
+        self.recurrent_layers = args.recurrent_layers
+        self.hidden_size = args.hidden_size
+        self.embedding_dim = args.embedding_dim
+        
+        # Input: state_dim + action_space (one-hot encoded action)
+        self.input_dim = state_dim + action_space
+        
+        print(f"[RecurrentDQN] Creating recurrent network with:")
+        print(f"      - Input dim per timestep: {self.input_dim} (state={state_dim} + action={action_space})")
+        print(f"      - Recurrent type: {self.recurrent_type}")
+        print(f"      - Recurrent hidden size: {self.recurrent_hidden_size}")
+        print(f"      - Recurrent layers: {self.recurrent_layers}")
+        print(f"      - DQN hidden size: {self.hidden_size}")
+        print(f"      - Action space: {self.action_space}")
+        
+        # Recurrent layer
+        if self.recurrent_type == "lstm":
+            self.recurrent = nn.LSTM(
+                input_size=self.input_dim,
+                hidden_size=self.recurrent_hidden_size,
+                num_layers=self.recurrent_layers,
+                batch_first=True,
+                dropout=args.recurrent_dropout if self.recurrent_layers > 1 else 0.0
+            )
+        elif self.recurrent_type == "gru":
+            self.recurrent = nn.GRU(
+                input_size=self.input_dim,
+                hidden_size=self.recurrent_hidden_size,
+                num_layers=self.recurrent_layers,
+                batch_first=True,
+                dropout=args.recurrent_dropout if self.recurrent_layers > 1 else 0.0
+            )
+        else:
+            raise ValueError(f"Unknown recurrent type: {self.recurrent_type}")
+        
+        # Feature extraction layers (take recurrent output)
+        self.fc_h_v = NoisyLinear(self.recurrent_hidden_size, self.hidden_size, std_init=args.noisy_std)
+        self.fc_h_a = NoisyLinear(self.recurrent_hidden_size, self.hidden_size, std_init=args.noisy_std)
+        
+        # Quantile embedding network
+        self.quantile_embedding = QuantileEmbedding(self.embedding_dim, self.hidden_size)
+        
+        # Output layers
+        self.fc_z_v = NoisyLinear(self.hidden_size, 1, std_init=args.noisy_std)
+        self.fc_z_a = NoisyLinear(self.hidden_size, action_space, std_init=args.noisy_std)
+        
+        # Hidden state buffer (for stateful mode if needed)
+        self.hidden_state = None
+        
+    def forward(self, x, num_quantiles, mask=None):
+        """
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, state_dim + action_space)
+            num_quantiles: Number of quantiles to sample
+            mask: Optional mask of shape (batch_size, seq_len) for padded timesteps
+        Returns:
+            quantile_values: Tensor of shape (batch_size, action_space, num_quantiles)
+            taus: Sampled quantile fractions of shape (batch_size, num_quantiles)
+        """
+        batch_size = x.size(0)
+        seq_len = x.size(1)
+        device = x.device
+        
+        # Process sequence through recurrent layer
+        # x: (batch_size, seq_len, input_dim)
+        if self.recurrent_type == "lstm":
+            rnn_out, (h_n, c_n) = self.recurrent(x)
+        else:  # GRU
+            rnn_out, h_n = self.recurrent(x)
+        
+        # Take the output from the last timestep
+        # If mask is provided, use the last valid timestep for each sequence
+        if mask is not None:
+            # mask: (batch_size, seq_len)
+            # Find the last valid timestep for each sequence
+            lengths = mask.sum(dim=1).long() - 1  # (batch_size,)
+            lengths = lengths.clamp(min=0)
+            # Gather the output at the last valid timestep
+            idx = lengths.unsqueeze(1).unsqueeze(2).expand(batch_size, 1, self.recurrent_hidden_size)
+            rnn_output = rnn_out.gather(1, idx).squeeze(1)  # (batch_size, recurrent_hidden_size)
+        else:
+            # Use the last timestep
+            rnn_output = rnn_out[:, -1, :]  # (batch_size, recurrent_hidden_size)
+        
+        # Sample quantile fractions uniformly from [0, 1]
+        taus = torch.rand(batch_size, num_quantiles, device=device)
+        
+        # Get quantile embeddings: (batch_size * num_quantiles, hidden_size)
+        quantile_embed = self.quantile_embedding(taus)
+        
+        # Extract state features for value and advantage streams
+        state_v = F.relu(self.fc_h_v(rnn_output))  # (batch_size, hidden_size)
+        state_a = F.relu(self.fc_h_a(rnn_output))  # (batch_size, hidden_size)
+        
+        # Replicate state features for each quantile
+        state_v_expanded = state_v.unsqueeze(1).repeat(1, num_quantiles, 1)
+        state_a_expanded = state_a.unsqueeze(1).repeat(1, num_quantiles, 1)
+        
+        # Reshape to (batch_size * num_quantiles, hidden_size)
+        state_v_flat = state_v_expanded.view(batch_size * num_quantiles, self.hidden_size)
+        state_a_flat = state_a_expanded.view(batch_size * num_quantiles, self.hidden_size)
+        
+        # Element-wise multiplication with quantile embeddings
+        combined_v = state_v_flat * quantile_embed
+        combined_a = state_a_flat * quantile_embed
+        
+        # Pass through output layers
+        v = self.fc_z_v(combined_v)  # (batch_size * num_quantiles, 1)
+        a = self.fc_z_a(combined_a)  # (batch_size * num_quantiles, action_space)
+        
+        # Reshape back
+        v = v.view(batch_size, num_quantiles, 1)
+        a = a.view(batch_size, num_quantiles, self.action_space)
+        
+        # Transpose to (batch_size, 1, num_quantiles) and (batch_size, action_space, num_quantiles)
+        v = v.transpose(1, 2)
+        a = a.transpose(1, 2)
+        
+        # Dueling architecture: Q = V + (A - mean(A))
+        q = v + a - a.mean(1, keepdim=True)
+        
+        # Output shape: (batch_size, action_space, num_quantiles)
+        return q, taus
+        
+    def reset_noise(self):
+        """Reset noise in all noisy layers"""
+        for name, module in self.named_children():
+            if 'fc' in name:
+                module.reset_noise()
+    
+    def reset_hidden_state(self):
+        """Reset hidden state (for stateful mode)"""
+        self.hidden_state = None
+
+
 
 
 #### PPO #####
@@ -194,54 +340,74 @@ class FeedForwardNN(nn.Module):
     def __init__(self, inp_dim, out_dim, hidden_size=64):
         super(FeedForwardNN, self).__init__()
 
-        self.layer1 = nn.Linear(inp_dim, hidden_size)
-        self.layer2 = nn.Linear(hidden_size, hidden_size)
-        self.layer3 = nn.Linear(hidden_size, out_dim)
-        self.relu = nn.ReLU()
+        self.net = nn.Sequential(
+            nn.Linear(inp_dim, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, out_dim),
+        )
 
-    
     def forward(self, obs):
-        # convert observation to tensor if it's a numpy array
-        if isinstance(obs, np.ndarray):
-            obs = torch.tensor(obs, dtype=torch.float)
-
-        x = self.relu(self.layer1(obs))
-        x = self.relu(self.layer2(x))
-        out = self.layer3(x)
-        return out
+        return self.net(obs)
 
 
-class ProximalPolicyOptimization:
-    def __init__(self, env, seed=43, lr=1e-3):
-        assert type(env.observation_space) == gym.spaces.Box, "This example only works for envs with continuous state spaces."
-        assert type(env.action_space) == gym.spaces.Box, "This example only works for envs with continuous action spaces."
-        self._set_seed(seed)
+class RolloutBuffer:
+    def __init__(self):
+        self.states = []
+        self.actions = []
+        self.logprobs = []
+        self.rewards = []
+        self.dones = []
+        self.state_values = []
+
+    def clear(self):
+        del self.states[:]
+        del self.actions[:]
+        del self.logprobs[:]
+        del self.rewards[:]
+        del self.dones[:]
+        del self.state_values[:]
+
+    def store_transition(self, state, action, logprob, reward, done, state_value):
+        self.states.append(state)
+        self.actions.append(action)
+        self.logprobs.append(logprob)
+        self.rewards.append(reward)
+        self.dones.append(done)
+        self.state_values.append(state_value)
+
+
+class PPO:
+    def __init__(self, env):
+        super(PPO, self).__init__()
+
+        self.env = env
 
         # extract environment information
-        self.env = env
-        self.obs_dim = env.observation_space.shape[0]    # = ns
-        self.act_dim = env.action_space.shape[0]    # = na
-        print(f"Observation Dimension: {self.obs_dim} | Action Dimension: {self.act_dim}")
+        self.obs_dim = env.observation_space.shape[0]
+        self.act_dim = env.action_space.shape[0]
 
-        # initialize actor and critic networks
-        self.actor = FeedForwardNN(inp_dim=self.obs_dim, out_dim=self.act_dim)
-        self.critic = FeedForwardNN(inp_dim=self.obs_dim, out_dim=1)
+        self._set_hyperparameters()
 
-        self.actor_optimizer = Adam(self.actor.parameters(), lr=lr, betas=(0.9, 0.999))
-        self.critic_optimizer = Adam(self.critic.parameters(), lr=lr, betas=(0.9, 0.999))
+        self.actor = FeedForwardNN(self.obs_dim, self.act_dim)
+        self.critic = FeedForwardNN(self.obs_dim, 1)
 
-        # initialize action covariance matrix for exploration
-        self.act_cov = torch.diag(torch.full(size=(self.act_dim,), fill_value=0.5))    # (na,na)
-        # print(self.action_cov_mat)
+        # create actor-critic optimizers
+        self.actor_optimizer = Adam(self.actor.parameters(), lr=self.lr)
+        self.critic_optimizer = Adam(self.critic.parameters(), lr=self.lr)
 
-        # initialize logger
+        # initialize covariance matrix for continuous action space
+        self.action_cov_var = torch.full(size=(self.act_dim,), fill_value=0.5)
+        self.act_cov = torch.diag(self.action_cov_var)
+
         self.logger = {
             'delta_t': time.time_ns(),
             't_so_far': 0,
             'i_so_far': 0,
-            'batch_lens': [],
+            'batch_lengths': [],
             'batch_rewards': [],
-            'actor_losses': [],
+            'actor_losses': []
         }
 
 

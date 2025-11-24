@@ -39,6 +39,8 @@ from Environment.wheel_env import WheelEnv
 Todo:
   add network size parameter for value net (also check what over nets in the hansen code ) to the config 
   add path to enviroment config like the other two algorithms
+  fix: why does reward mess up? reward should never be positive in the last exp i ran with this
+  could be because initialization through config does not work in here
 
 '''
 
@@ -61,7 +63,7 @@ def train(cfg: dict):
   # Environment setup
   ##############################
   def make_env(env_config, seed):
-      env = WheelEnv(reward_func="percentage",action_space_selection="continous",state_space_selection="rimandspokes")  # Your custom wrapper
+      env = WheelEnv(reward_func="raw",action_space_selection="continous",state_space_selection="rimpoints")  # Your custom wrapper
       print("env action space:", env.action_space)
       print("env reward func:", env.reward_func)
       print("env observation space:", env.observation_space)

@@ -125,6 +125,10 @@ class ReplayMemory():
         self.t = 0  # Internal episode timestep counter
         self.state_shape = state_shape  # Store state shape
         
+        # Recurrent network support
+        self.use_recurrent = getattr(args, 'use_recurrent', False)
+        self.recurrent_seq_len = getattr(args, 'recurrent_sequence_length', 8) if self.use_recurrent else 1
+        
         self.n_step_scaling = torch.tensor(
             [self.discount ** i for i in range(self.n)], 
             dtype=torch.float32, 
@@ -151,15 +155,31 @@ class ReplayMemory():
 
     # Returns the transitions with blank states where appropriate
     def _get_transitions(self, idxs):
-        transition_idxs = np.arange(-self.history + 1, self.n + 1) + np.expand_dims(idxs, axis=1)
+        if self.use_recurrent:
+            # For recurrent networks, fetch longer sequences
+            transition_idxs = np.arange(-self.recurrent_seq_len + 1, self.n + 1) + np.expand_dims(idxs, axis=1)
+        else:
+            # Standard behavior
+            transition_idxs = np.arange(-self.history + 1, self.n + 1) + np.expand_dims(idxs, axis=1)
+            
         transitions = self.transitions.get(transition_idxs)
         transitions_firsts = transitions['timestep'] == 0
         blank_mask = np.zeros_like(transitions_firsts, dtype=np.bool_)
-        for t in range(self.history - 2, -1, -1):  # e.g. 2 1 0
-            blank_mask[:, t] = np.logical_or(blank_mask[:, t + 1], transitions_firsts[:, t + 1])  # True if future frame has timestep 0
-        for t in range(self.history, self.history + self.n):  # e.g. 4 5 6
-            blank_mask[:, t] = np.logical_or(blank_mask[:, t - 1], transitions_firsts[:, t])  # True if current or past frame has timestep 0
-        transitions[blank_mask] = self.transitions.blank_trans  # Use instance's blank_trans
+        
+        if self.use_recurrent:
+            # For recurrent: mask out transitions before episode start
+            for t in range(self.recurrent_seq_len - 2, -1, -1):
+                blank_mask[:, t] = np.logical_or(blank_mask[:, t + 1], transitions_firsts[:, t + 1])
+            for t in range(self.recurrent_seq_len, self.recurrent_seq_len + self.n):
+                blank_mask[:, t] = np.logical_or(blank_mask[:, t - 1], transitions_firsts[:, t])
+        else:
+            # Standard behavior
+            for t in range(self.history - 2, -1, -1):  # e.g. 2 1 0
+                blank_mask[:, t] = np.logical_or(blank_mask[:, t + 1], transitions_firsts[:, t + 1])
+            for t in range(self.history, self.history + self.n):  # e.g. 4 5 6
+                blank_mask[:, t] = np.logical_or(blank_mask[:, t - 1], transitions_firsts[:, t])
+                
+        transitions[blank_mask] = self.transitions.blank_trans
         return transitions
 
     # Returns a valid sample from each segment
@@ -167,35 +187,110 @@ class ReplayMemory():
         segment_length = p_total / batch_size  # Batch size number of segments, based on sum over all probabilities
         segment_starts = np.arange(batch_size) * segment_length
         valid = False
+        
+        # Determine the minimum required history
+        min_history = self.recurrent_seq_len if self.use_recurrent else self.history
+        
         while not valid:
             samples = np.random.uniform(0.0, segment_length, [batch_size]) + segment_starts  # Uniformly sample from within all segments
             probs, idxs, tree_idxs = self.transitions.find(samples)  # Retrieve samples from tree with un-normalised probability
-            if np.all((self.transitions.index - idxs) % self.capacity > self.n) and np.all((idxs - self.transitions.index) % self.capacity >= self.history) and np.all(probs != 0):
+            if np.all((self.transitions.index - idxs) % self.capacity > self.n) and np.all((idxs - self.transitions.index) % self.capacity >= min_history) and np.all(probs != 0):
                 valid = True  # Note that conditions are valid but extra conservative around buffer index 0
-        # Retrieve all required transition data (from t - h to t + n)
+        
+        # Retrieve all required transition data
         transitions = self._get_transitions(idxs)
+        
+        if self.use_recurrent:
+            # Return sequences for recurrent networks
+            return self._prepare_recurrent_batch(transitions, batch_size, probs, idxs, tree_idxs)
+        else:
+            # Standard non-recurrent batch preparation
+            return self._prepare_standard_batch(transitions, batch_size, probs, idxs, tree_idxs)
+    
+    def _prepare_standard_batch(self, transitions, batch_size, probs, idxs, tree_idxs):
+        """Prepare standard batch for non-recurrent networks"""
         # Create un-discretised states and nth next states
         all_states = transitions['state']
-        # Use np.copy to ensure contiguous memory layout before converting to torch
         states = torch.tensor(np.copy(all_states[:, :self.history]), device=self.device, dtype=torch.float32)
         next_states = torch.tensor(np.copy(all_states[:, self.n:self.n + self.history]), device=self.device, dtype=torch.float32)
+        
         # Discrete actions to be used as index
         actions = torch.tensor(np.copy(transitions['action'][:, self.history - 1]), dtype=torch.int64, device=self.device)
-        # Calculate truncated n-step discounted returns R^n = Σ_k=0->n-1 (γ^k)R_t+k+1 (note that invalid nth next states have reward 0)
+        
+        # Calculate truncated n-step discounted returns R^n = Σ_k=0->n-1 (γ^k)R_t+k+1
         rewards = torch.tensor(np.copy(transitions['reward'][:, self.history - 1:-1]), dtype=torch.float32, device=self.device)
         R = torch.matmul(rewards, self.n_step_scaling)
+        
         # Mask for non-terminal nth next states
         nonterminals = torch.tensor(np.expand_dims(transitions['nonterminal'][:, self.history + self.n - 1], axis=1), dtype=torch.float32, device=self.device)
+        
         return probs, idxs, tree_idxs, states, actions, R, next_states, nonterminals
+    
+    def _prepare_recurrent_batch(self, transitions, batch_size, probs, idxs, tree_idxs):
+        """Prepare batch with sequences for recurrent networks"""
+        # Extract state and action sequences
+        # Sequences: from -(recurrent_seq_len-1) to 0 (current)
+        state_sequences = transitions['state'][:, :self.recurrent_seq_len]  # (batch, seq_len, *state_shape)
+        action_sequences = transitions['action'][:, :self.recurrent_seq_len]  # (batch, seq_len)
+        
+        # Next state sequences: for n-step ahead
+        next_state_sequences = transitions['state'][:, self.n:self.n + self.recurrent_seq_len]
+        next_action_sequences = transitions['action'][:, self.n:self.n + self.recurrent_seq_len]
+        
+        # Current action (the one at index recurrent_seq_len - 1, which is the "current" timestep)
+        current_actions = torch.tensor(np.copy(transitions['action'][:, self.recurrent_seq_len - 1]), 
+                                       dtype=torch.int64, device=self.device)
+        
+        # Calculate n-step returns
+        rewards = torch.tensor(np.copy(transitions['reward'][:, self.recurrent_seq_len - 1:-1]), 
+                              dtype=torch.float32, device=self.device)
+        R = torch.matmul(rewards, self.n_step_scaling)
+        
+        # Nonterminals
+        nonterminals = torch.tensor(
+            np.expand_dims(transitions['nonterminal'][:, self.recurrent_seq_len + self.n - 1], axis=1),
+            dtype=torch.float32, device=self.device
+        )
+        
+        # Create masks for valid timesteps (1 where valid, 0 where padded/blank)
+        timesteps = transitions['timestep'][:, :self.recurrent_seq_len]
+        # A timestep is invalid if it's 0 (episode start) AND it's not the very first step in our sequence
+        # We need to create a mask that marks invalid positions
+        masks = torch.ones((batch_size, self.recurrent_seq_len), dtype=torch.float32, device=self.device)
+        next_masks = torch.ones((batch_size, self.recurrent_seq_len), dtype=torch.float32, device=self.device)
+        
+        # Convert sequences to tensors
+        states_seq = torch.tensor(np.copy(state_sequences), device=self.device, dtype=torch.float32)
+        actions_seq = torch.tensor(np.copy(action_sequences), device=self.device, dtype=torch.int64)
+        next_states_seq = torch.tensor(np.copy(next_state_sequences), device=self.device, dtype=torch.float32)
+        next_actions_seq = torch.tensor(np.copy(next_action_sequences), device=self.device, dtype=torch.int64)
+        
+        return (probs, idxs, tree_idxs, states_seq, actions_seq, masks, 
+                current_actions, R, next_states_seq, next_actions_seq, next_masks, nonterminals)
 
     def sample(self, batch_size):
-        p_total = self.transitions.total()  # Retrieve sum of all priorities (used to create a normalised probability distribution)
-        probs, idxs, tree_idxs, states, actions, returns, next_states, nonterminals = self._get_samples_from_segments(batch_size, p_total)  # Get batch of valid samples
+        p_total = self.transitions.total()  # Retrieve sum of all priorities
+        samples = self._get_samples_from_segments(batch_size, p_total)  # Get batch of valid samples
+        
+        if self.use_recurrent:
+            # Unpack recurrent batch
+            (probs, idxs, tree_idxs, states_seq, actions_seq, masks,
+             actions, returns, next_states_seq, next_actions_seq, next_masks, nonterminals) = samples
+        else:
+            # Unpack standard batch
+            probs, idxs, tree_idxs, states, actions, returns, next_states, nonterminals = samples
+        
+        # Calculate importance-sampling weights
         probs = probs / p_total  # Calculate normalised probabilities
         capacity = self.capacity if self.transitions.full else self.transitions.index
         weights = (capacity * probs) ** -self.priority_weight  # Compute importance-sampling weights w
         weights = torch.tensor(weights / weights.max(), dtype=torch.float32, device=self.device)  # Normalise by max importance-sampling weight from batch
-        return tree_idxs, states, actions, returns, next_states, nonterminals, weights
+        
+        if self.use_recurrent:
+            return (tree_idxs, states_seq, actions_seq, masks, actions, returns, 
+                   next_states_seq, next_actions_seq, next_masks, nonterminals, weights)
+        else:
+            return tree_idxs, states, actions, returns, next_states, nonterminals, weights
 
     def update_priorities(self, idxs, priorities):
         priorities = np.power(priorities, self.priority_exponent)
@@ -215,7 +310,7 @@ class ReplayMemory():
         blank_mask = np.zeros_like(transitions_firsts, dtype=np.bool_)
         for t in reversed(range(self.history - 1)):
             blank_mask[t] = np.logical_or(blank_mask[t + 1], transitions_firsts[t + 1])  # If future frame has timestep 0
-        transitions[blank_mask] = self.transitions.blank_trans  # Use instance's blank_trans
+        transitions[blank_mask] = self.transitions.blank_trans
         state = torch.tensor(np.copy(transitions['state']), dtype=torch.float32, device=self.device)  # Agent will turn into batch
         self.current_idx += 1
         return state

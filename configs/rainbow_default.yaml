@@ -14,8 +14,16 @@ batch_size: 64
 # Network architecture
 history_length: 1
 architecture: canonical
-hidden_size: 800
+hidden_size: 256
 noisy_std: 0.1
+
+# Recurrent network settings
+use_recurrent: false          # Enable/disable RNN mode
+recurrent_sequence_length: 3  # Number of past state-action pairs to use
+recurrent_hidden_size: 256    # Hidden state size for LSTM/GRU
+recurrent_type: "gru"        # "lstm" or "gru"
+recurrent_layers: 1           # Number of recurrent layers
+recurrent_dropout: 0.0        # Dropout between recurrent layers (if layers > 1)
 
 # IQN components
 num_quantiles: 32        # Number of quantiles for training
@@ -38,7 +46,7 @@ norm_clip: 10.0
 target_update: 6000
 
 # Evaluation
-evaluation_interval: 100000
+evaluation_interval: 1000000
 evaluation_episodes: 10
 evaluation_size: 500
 

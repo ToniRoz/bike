@@ -170,6 +170,7 @@ class RainbowTrainer(BaseTrainer):
 
         try:
             state, _ = self.env.reset()
+            self.agent.reset_episode()
         except Exception as e:
             self.log(f"Error during env.reset(): {e}")
             return
@@ -202,6 +203,7 @@ class RainbowTrainer(BaseTrainer):
                     episode_reward = 0
                     step_counter = 0
                     state, info = self.env.reset()
+                    self.agent.reset_episode()
                     first_state_norm = info['raw state norm']
                     first_tensions = np.linalg.norm(info['spoke tensions']-800)
                     first_turns = np.sum(abs(info['spoke turns']))
@@ -288,6 +290,7 @@ class RainbowTrainer(BaseTrainer):
         
         for _ in range(self.config.evaluation_episodes):
             state, info = self.env.reset()
+            self.agent.reset_episode()
             done = False
             episode_reward = 0
             

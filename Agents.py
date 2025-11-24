@@ -8,8 +8,9 @@ from torch.nn.utils import clip_grad_norm_
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Categorical
 import gymnasium as gym
+from collections import deque
 
-from Models import DQN
+from Models import DQN, RecurrentDQN
 
 """
 Todo:
@@ -19,7 +20,7 @@ Todo:
 
 
 class RainbowAgent:
-    """Rainbow DQN agent with dynamic state and action space inference"""
+    """Rainbow DQN agent with dynamic state and action space inference and optional recurrent support"""
     
     def __init__(self, config, env):
         self.config = config
@@ -48,9 +49,23 @@ class RainbowAgent:
         print(f"[RainbowAgent] Inferred action_space: {self.action_space} (type: {self.action_type})")
         print(f"[RainbowAgent] Inferred state_dim: {self.state_dim}, state_shape: {self.state_shape}")
         
+        # ========== RECURRENT NETWORK SUPPORT ==========
+        self.use_recurrent = getattr(config, 'use_recurrent', False)
+        if self.use_recurrent:
+            self.recurrent_seq_len = config.recurrent_sequence_length
+            print(f"[RainbowAgent] Using recurrent network with sequence length: {self.recurrent_seq_len}")
+            
+            # Initialize action history buffer
+            self.action_history = deque(maxlen=self.recurrent_seq_len)
+            self.state_history = deque(maxlen=self.recurrent_seq_len)
+        
         # ========== CREATE NETWORKS ==========
-        self.online_net = DQN(config, self.action_space, self.state_dim).to(self.device)
-        self.target_net = DQN(config, self.action_space, self.state_dim).to(self.device)
+        if self.use_recurrent:
+            self.online_net = RecurrentDQN(config, self.action_space, self.state_dim).to(self.device)
+            self.target_net = RecurrentDQN(config, self.action_space, self.state_dim).to(self.device)
+        else:
+            self.online_net = DQN(config, self.action_space, self.state_dim).to(self.device)
+            self.target_net = DQN(config, self.action_space, self.state_dim).to(self.device)
         
         # Initialize target network with same weights
         self.update_target_net()
@@ -78,23 +93,98 @@ class RainbowAgent:
         """Reset noise in noisy layers"""
         self.online_net.reset_noise()
     
+    def reset_episode(self):
+        """Reset episode-specific state (e.g., action history for recurrent networks)"""
+        if self.use_recurrent:
+            self.action_history.clear()
+            self.state_history.clear()
+            self.online_net.reset_hidden_state()
+    
+    def _construct_input_sequence(self, state):
+        """Construct input sequence for recurrent network from current state and history"""
+        # Add current state to history
+        if isinstance(state, np.ndarray):
+            state_tensor = torch.FloatTensor(state).to(self.device)
+        else:
+            state_tensor = state.to(self.device)
+        
+        # Build state sequence (pad with zeros if necessary)
+        state_seq = []
+        action_seq = []
+        
+        # Add historical states and actions
+        for s, a in zip(self.state_history, self.action_history):
+            state_seq.append(s)
+            action_seq.append(a)
+        
+        # Add current state
+        state_seq.append(state_tensor)
+        
+        # Pad if we don't have enough history yet
+        while len(state_seq) < self.recurrent_seq_len:
+            state_seq.insert(0, torch.zeros_like(state_tensor))
+            action_seq.insert(0, 0)  # Pad with action 0
+        
+        # Convert to tensors
+        # Stack states: (seq_len, *state_shape)
+        state_seq_tensor = torch.stack(state_seq[-self.recurrent_seq_len:])
+        
+        # One-hot encode actions: (seq_len, action_space)
+        action_seq_tensor = torch.zeros(self.recurrent_seq_len, self.action_space, device=self.device)
+        for i, a in enumerate(action_seq[-self.recurrent_seq_len:]):
+            action_seq_tensor[i, a] = 1.0
+        
+        # Flatten state if necessary and concatenate with one-hot actions
+        # state_seq_tensor: (seq_len, *state_shape) -> (seq_len, state_dim)
+        state_seq_flat = state_seq_tensor.reshape(self.recurrent_seq_len, -1)
+        
+        # Concatenate state and action: (seq_len, state_dim + action_space)
+        input_seq = torch.cat([state_seq_flat, action_seq_tensor], dim=1)
+        
+        # Add batch dimension: (1, seq_len, state_dim + action_space)
+        input_seq = input_seq.unsqueeze(0)
+        
+        return input_seq
+    
     def act(self, state):
         """Select action using the online network (for training with noise)"""
         with torch.no_grad():
-            # Convert state to tensor
-            if not isinstance(state, torch.Tensor):
-                state = torch.FloatTensor(state).to(self.device)
-            
-            # Add batch dimension if needed
-            if state.dim() == len(self.state_shape):
-                state = state.unsqueeze(0)
-            
-            # Get Q-values (averaged over quantiles)
-            q_values, _ = self.online_net(state, self.num_quantiles_eval)
-            q_values = q_values.mean(dim=2)  # Average over quantiles
-            
-            # Select action with highest Q-value
-            action = q_values.argmax(dim=1).item()
+            if self.use_recurrent:
+                # Construct input sequence
+                input_seq = self._construct_input_sequence(state)
+                
+                # Get Q-values from recurrent network
+                q_values, _ = self.online_net(input_seq, self.num_quantiles_eval)
+                q_values = q_values.mean(dim=2)  # Average over quantiles
+                
+                # Select action with highest Q-value
+                action = q_values.argmax(dim=1).item()
+                
+                # Update history
+                if isinstance(state, np.ndarray):
+                    state_tensor = torch.FloatTensor(state).to(self.device)
+                else:
+                    state_tensor = state.to(self.device)
+                
+                self.state_history.append(state_tensor)
+                self.action_history.append(action)
+                
+            else:
+                # Standard DQN behavior
+                # Convert state to tensor
+                if not isinstance(state, torch.Tensor):
+                    state = torch.FloatTensor(state).to(self.device)
+                
+                # Add batch dimension if needed
+                if state.dim() == len(self.state_shape):
+                    state = state.unsqueeze(0)
+                
+                # Get Q-values (averaged over quantiles)
+                q_values, _ = self.online_net(state, self.num_quantiles_eval)
+                q_values = q_values.mean(dim=2)  # Average over quantiles
+                
+                # Select action with highest Q-value
+                action = q_values.argmax(dim=1).item()
             
             # Store for potential debugging
             self.q_values = q_values
@@ -111,10 +201,23 @@ class RainbowAgent:
     def learn(self, memory):
         """Perform one step of learning"""
         # Sample batch from memory
-        idxs, states, actions, returns, next_states, nonterminals, weights = memory.sample(
-            self.config.batch_size
-        )
-        
+        if self.use_recurrent:
+            (idxs, states_seq, actions_seq, masks, actions, returns, 
+             next_states_seq, next_actions_seq, next_masks, nonterminals, weights) = memory.sample(
+                self.config.batch_size
+            )
+            return self._learn_recurrent(
+                memory, idxs, states_seq, actions_seq, masks, actions, returns,
+                next_states_seq, next_actions_seq, next_masks, nonterminals, weights
+            )
+        else:
+            idxs, states, actions, returns, next_states, nonterminals, weights = memory.sample(
+                self.config.batch_size
+            )
+            return self._learn_standard(memory, idxs, states, actions, returns, next_states, nonterminals, weights)
+    
+    def _learn_standard(self, memory, idxs, states, actions, returns, next_states, nonterminals, weights):
+        """Standard (non-recurrent) learning step"""
         # Reshape states for network input
         batch_size = states.shape[0]
         # states shape: (batch_size, history_length, *state_shape)
@@ -196,6 +299,98 @@ class RainbowAgent:
         
         return loss.item()
     
+    def _learn_recurrent(self, memory, idxs, states_seq, actions_seq, masks, actions, returns,
+                         next_states_seq, next_actions_seq, next_masks, nonterminals, weights):
+        """Recurrent network learning step"""
+        batch_size = states_seq.shape[0]
+        seq_len = states_seq.shape[1]
+        
+        # Prepare input sequences: concatenate states and one-hot actions
+        # states_seq: (batch, seq_len, *state_shape)
+        # actions_seq: (batch, seq_len)
+        
+        # Flatten states: (batch, seq_len, state_dim)
+        states_seq_flat = states_seq.reshape(batch_size, seq_len, -1)
+        next_states_seq_flat = next_states_seq.reshape(batch_size, seq_len, -1)
+        
+        # One-hot encode actions: (batch, seq_len, action_space)
+        actions_one_hot = torch.zeros(batch_size, seq_len, self.action_space, device=self.device)
+        actions_one_hot.scatter_(2, actions_seq.unsqueeze(2), 1.0)
+        
+        next_actions_one_hot = torch.zeros(batch_size, seq_len, self.action_space, device=self.device)
+        next_actions_one_hot.scatter_(2, next_actions_seq.unsqueeze(2), 1.0)
+        
+        # Concatenate: (batch, seq_len, state_dim + action_space)
+        input_seq = torch.cat([states_seq_flat, actions_one_hot], dim=2)
+        next_input_seq = torch.cat([next_states_seq_flat, next_actions_one_hot], dim=2)
+        
+        # Get current Q-value distributions from recurrent network
+        current_quantiles, taus = self.online_net(input_seq, self.num_quantiles_train, mask=masks)
+        # current_quantiles: (batch_size, action_space, num_quantiles)
+        
+        # Select the quantiles for the taken actions
+        actions_expanded = actions.unsqueeze(1).unsqueeze(2).expand(
+            batch_size, 1, self.num_quantiles_train
+        )
+        current_quantiles = current_quantiles.gather(1, actions_expanded).squeeze(1)
+        # current_quantiles: (batch_size, num_quantiles)
+        
+        with torch.no_grad():
+            # Double DQN: Use online network to select actions
+            next_q_values, _ = self.online_net(next_input_seq, self.num_quantiles_eval, mask=next_masks)
+            next_q_values = next_q_values.mean(dim=2)  # Average over quantiles
+            next_actions = next_q_values.argmax(dim=1)
+            
+            # Use target network to evaluate the selected actions
+            next_quantiles, _ = self.target_net(next_input_seq, self.num_quantiles_train, mask=next_masks)
+            next_actions_expanded = next_actions.unsqueeze(1).unsqueeze(2).expand(
+                batch_size, 1, self.num_quantiles_train
+            )
+            next_quantiles = next_quantiles.gather(1, next_actions_expanded).squeeze(1)
+            # next_quantiles: (batch_size, num_quantiles)
+            
+            # Compute target quantiles
+            target_quantiles = returns.unsqueeze(1) + nonterminals * self.config.discount * next_quantiles
+        
+        # Compute quantile Huber loss
+        current_quantiles_exp = current_quantiles.unsqueeze(2)
+        target_quantiles_exp = target_quantiles.unsqueeze(1)
+        
+        # TD errors
+        td_errors = target_quantiles_exp - current_quantiles_exp
+        
+        # Huber loss
+        huber_loss = torch.where(
+            td_errors.abs() <= self.kappa,
+            0.5 * td_errors.pow(2),
+            self.kappa * (td_errors.abs() - 0.5 * self.kappa)
+        )
+        
+        # Quantile weights
+        taus_exp = taus.unsqueeze(2)
+        quantile_weights = torch.abs(taus_exp - (td_errors < 0).float())
+        
+        # Quantile Huber loss
+        quantile_huber_loss = quantile_weights * huber_loss
+        loss = quantile_huber_loss.sum(dim=2).mean(dim=1)  # (batch_size,)
+        
+        # Apply importance sampling weights
+        loss = (weights * loss).mean()
+        
+        # Optimize
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Gradient clipping
+        if hasattr(self.config, 'grad_clip') and self.config.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), self.config.grad_clip)
+        self.optimizer.step()
+        
+        # Update priorities in memory
+        priorities = quantile_huber_loss.sum(dim=2).mean(dim=1).detach().cpu().numpy()
+        memory.update_priorities(idxs, priorities)
+        
+        return loss.item()
+    
     def update_target_net(self):
         """Update target network with online network weights"""
         self.target_net.load_state_dict(self.online_net.state_dict())
@@ -208,45 +403,58 @@ class RainbowAgent:
         """Set network to evaluation mode"""
         self.online_net.eval()
     
-    def evaluate_q(self, state):
-        """Evaluate Q-value for a state (used in evaluation)"""
-        with torch.no_grad():
-            if not isinstance(state, torch.Tensor):
-                state = torch.FloatTensor(state).to(self.device)
-            
-            if state.dim() == len(self.state_shape):
-                state = state.unsqueeze(0)
-            
-            state = state.reshape(1, -1)
-            q_values, _ = self.online_net(state, self.num_quantiles_eval)
-            q_values = q_values.mean(dim=2)  # Average over quantiles
-            
-            return q_values.max().item()
-    
-    def save(self, path, name='model.pth'):
-        """Save model checkpoint"""
-        import os
-        os.makedirs(path, exist_ok=True)
-        save_path = os.path.join(path, name)
-        torch.save({
+    def save(self, path):
+        """Save model checkpoint with recurrent state"""
+        checkpoint = {
             'online_net': self.online_net.state_dict(),
             'target_net': self.target_net.state_dict(),
             'optimizer': self.optimizer.state_dict(),
-        }, save_path)
-        print(f"Model saved to {save_path}")
+            'config': {
+                'use_recurrent': self.use_recurrent,
+                'action_space': self.action_space,
+                'state_dim': self.state_dim,
+                'state_shape': self.state_shape,
+            }
+        }
     
-    def load(self, path):
-        """Load model checkpoint"""
+        # Save recurrent-specific state if applicable
+        if self.use_recurrent:
+            checkpoint['recurrent_state'] = {
+                'action_history': list(self.action_history),
+                'state_history': [s.cpu() for s in self.state_history],
+                'seq_len': self.recurrent_seq_len
+            }
+        
+        torch.save(checkpoint, path)
+        print(f"[RainbowAgent] Checkpoint saved to {path}")
+    
+    def load(self, path, load_optimizer=True, load_recurrent_state=False):
+        """
+        Load model checkpoint
+        
+        Args:
+            path: Path to checkpoint file
+            load_optimizer: Whether to load optimizer state (set False for evaluation)
+            load_recurrent_state: Whether to restore action/state history (usually False)
+        """
         checkpoint = torch.load(path, map_location=self.device)
+        
         self.online_net.load_state_dict(checkpoint['online_net'])
         self.target_net.load_state_dict(checkpoint['target_net'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        print(f"Model loaded from {path}")
+        
+        if load_optimizer and 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+        
+        # Optionally restore recurrent state (usually not needed)
+        if load_recurrent_state and self.use_recurrent and 'recurrent_state' in checkpoint:
+            recurrent_state = checkpoint['recurrent_state']
+            self.action_history = deque(recurrent_state['action_history'], 
+                                        maxlen=self.recurrent_seq_len)
+            self.state_history = deque([s.to(self.device) for s in recurrent_state['state_history']], 
+                                    maxlen=self.recurrent_seq_len)
+        
+        print(f"[RainbowAgent] Checkpoint loaded from {path}")
 
-
-
-
-#### PPO ####
 
 class RolloutBuffer:
     def __init__(self):
@@ -254,41 +462,35 @@ class RolloutBuffer:
         self.actions = []
         self.logprobs = []
         self.rewards = []
-        self.state_values = []
         self.dones = []
+        self.state_values = []
+
+    def clear(self):
+        del self.states[:]
+        del self.actions[:]
+        del self.logprobs[:]
+        del self.rewards[:]
+        del self.dones[:]
+        del self.state_values[:]
 
     def store_transition(self, state, action, logprob, reward, done, state_value):
         self.states.append(state)
         self.actions.append(action)
         self.logprobs.append(logprob)
         self.rewards.append(reward)
-        self.state_values.append(state_value)
         self.dones.append(done)
-    
-    def clear(self):
-        self.states.clear()
-        self.actions.clear()
-        self.logprobs.clear()
-        self.rewards.clear()
-        self.state_values.clear()
-        self.dones.clear()
+        self.state_values.append(state_value)
 
 
 class ActorCritic(nn.Module):
-    def __init__(
-            self, 
-            obs_dim, 
-            action_dim, 
-            hidden_dim, 
-            continuous_action_space=False, 
-            action_std_init=0.0, 
-            device='cpu'
-        ):
+    def __init__(self, obs_dim, action_dim, hidden_dim, continuous_action_space=False, action_std_init=0.6, device='cpu'):
         super(ActorCritic, self).__init__()
+
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
         self.continuous_action_space = continuous_action_space
         self.device = device
 
-        # create shared feature extractor for both actor and critic
         self.feature_extractor = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim, dtype=torch.float32),
             nn.Tanh(),
@@ -325,14 +527,11 @@ class ActorCritic(nn.Module):
         # to prevent unnecessary gradient computation
         with torch.no_grad():
             action_out, value = self.forward(obs)
-            # print('stage-0:', action_out.shape, value, obs.shape)
 
             if self.continuous_action_space:
-                action_cov = torch.diag(self.action_var)    # (na, na)
-                # print('stage-1:', action_out.shape, action_cov.shape)
+                action_cov = torch.diag(self.action_var)
                 dist = MultivariateNormal(action_out, action_cov)
             else:
-                # print(action_out.shape)
                 dist = Categorical(action_out)
 
             action = dist.sample()
@@ -342,7 +541,6 @@ class ActorCritic(nn.Module):
                 if action.dim() == 2 and action.shape[0] == 1:
                     action = action.squeeze(0).cpu().numpy()
             else:
-                # action = torch.clamp(action, -1.0, 1.0)
                 action = action.item()
 
         return action, action_logprob.cpu().numpy(), value.item()
@@ -430,21 +628,15 @@ class PPOAgent:
 
 
     def update_policy(self):
-        # print(len(self.buffer.rewards))
         rewards_to_go = self.compute_returns()
-        # print(len(rewards_to_go))
 
         states = torch.from_numpy(np.array(self.buffer.states)).float().to(self.device)
         actions = torch.from_numpy(np.array(self.buffer.actions)).float().to(self.device)
         old_logprobs = torch.from_numpy(np.array(self.buffer.logprobs)).float().to(self.device)
         state_vals = torch.from_numpy(np.array(self.buffer.state_values)).float().to(self.device)
 
-        # print('stage-0:', rewards_to_go.shape, state_vals.shape)
-        # print('stage-1:', rewards_to_go.device, state_vals.device)
         advantages = rewards_to_go - state_vals
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-6)
-
-        # print(states.shape, actions.shape, old_logprobs.shape, state_vals.shape, advantages.shape, rewards_to_go.shape)
 
         for _ in range(self.num_epochs):
             # generate random indices for minibatch
@@ -462,22 +654,18 @@ class PPOAgent:
                 
                 # evaluate old actions and values
                 state_values, logprobs, dist_entropy = self.policy.evaluate_actions(batch_states, batch_actions)
-                # print(logprobs.shape, batch_old_logprobs.shape)
 
                 # Finding the ratio (pi_theta / pi_theta_old)
                 ratios = torch.exp(logprobs - batch_old_logprobs.squeeze(-1))
 
                 # Finding Surrogate Loss
-                # print(ratios.shape, batch_advantages.shape)
                 surr1 = ratios * batch_advantages
                 surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * batch_advantages
 
                 # final loss of clipped objective PPO
                 actor_loss = -torch.min(surr1, surr2).mean()
-                # print(state_values.dtype, batch_rewards_to_go.dtype)
                 critic_loss = 0.5 * self.mse_loss(state_values.squeeze(), batch_rewards_to_go)
                 loss = actor_loss + self.value_loss_coef * critic_loss - self.entropy_coef * dist_entropy.mean()
-                # print("Final loss:", actor_loss, critic_loss, dist_entropy, loss)
 
                 # calculate gradients and backpropagate for actor network
                 self.optimizer.zero_grad()
