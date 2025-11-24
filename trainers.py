@@ -184,7 +184,7 @@ class RainbowTrainer(BaseTrainer):
                             # Only compute wheel_change if info exists
                             if 'raw state norm' in info:
                                 current_norm = info['raw state norm']
-                                current_tension = np.linalg.norm(info['spoke tensions']-800)
+                                current_tension = np.linalg.norm(info['spoke tensions'])
                                 current_turns = np.sum(abs(info['spoke turns']))
                                 wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                                 turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
@@ -205,7 +205,7 @@ class RainbowTrainer(BaseTrainer):
                     state, info = self.env.reset()
                     self.agent.reset_episode()
                     first_state_norm = info['raw state norm']
-                    first_tensions = np.linalg.norm(info['spoke tensions']-800)
+                    first_tensions = np.linalg.norm(info['spoke tensions'])
                     first_turns = np.sum(abs(info['spoke turns']))
                     done = False 
 
@@ -421,7 +421,7 @@ class PPOTrainer(BaseTrainer):
                 
                 if done:
                     current_norm = info['raw state norm']
-                    current_tension = np.linalg.norm(info['spoke tensions']-800)
+                    current_tension = np.linalg.norm(info['spoke tensions'])
                     current_turns = np.sum(abs(info['spoke turns']))
                     wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                     turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
