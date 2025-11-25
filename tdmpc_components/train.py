@@ -103,11 +103,8 @@ def train(cfg: dict):
       print(f"Reward function: {env.reward_func}")
       print(f"Action space selection: {wheel_params['action_space_selection']}")
       print(f"State space selection: {wheel_params['state_space_selection']}")
-<<<<<<< HEAD
       print(f"len_theta: {wheel_params.get('len_theta', 'default')}")
       print(f"n_spokes: {wheel_params.get('n_spokes', 'default')}")
-=======
->>>>>>> 012450fa5bc5c37d5a4ba9a6de1031d22a31ce5a
       print("-"*80 + "\n")
       
       env = gym.wrappers.RecordEpisodeStatistics(env)
