@@ -1,5 +1,9 @@
 defaults:
+<<<<<<< HEAD:tdmpc_components/configs/config.yaml
   - _self_
+=======
+  - env: wheel
+>>>>>>> 012450fa5bc5c37d5a4ba9a6de1031d22a31ce5a:tdmpc_components/config.yaml
 
 hydra:
   job:

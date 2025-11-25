@@ -15,6 +15,7 @@ import tensorflow as tf
 import tqdm
 from flax.metrics import tensorboard
 from flax.training.train_state import TrainState
+from omegaconf import OmegaConf
 
 from tdmpc2 import TDMPC2
 from world_model import WorldModel
@@ -38,9 +39,7 @@ from Environment.wheel_env import WheelEnv
 '''
 Todo:
   add network size parameter for value net (also check what over nets in the hansen code ) to the config 
-  add path to enviroment config like the other two algorithms
-  fix: why does reward mess up? reward should never be positive in the last exp i ran with this
-  could be because initialization through config does not work in here
+
 
 '''
 
@@ -57,7 +56,23 @@ def train(cfg: dict):
   ##############################
   output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
   writer = tensorboard.SummaryWriter(os.path.join(output_dir, 'tensorboard'))
-  writer.hparams(cfg)
+  
+  # Save complete config (including env params from wheel.yaml)
+  config_dict = OmegaConf.to_container(cfg, resolve=True)
+  writer.hparams(config_dict)
+  
+  # Save config as YAML file
+  config_save_path = os.path.join(output_dir, 'config.yaml')
+  with open(config_save_path, 'w') as f:
+    OmegaConf.save(cfg, f)
+  print(f"Configuration saved to: {config_save_path}")
+  
+  # Print the full configuration
+  print("\n" + "="*80)
+  print("FULL CONFIGURATION")
+  print("="*80)
+  print(OmegaConf.to_yaml(cfg))
+  print("="*80 + "\n")
 
   ##############################
   # Environment setup
@@ -88,8 +103,11 @@ def train(cfg: dict):
       print(f"Reward function: {env.reward_func}")
       print(f"Action space selection: {wheel_params['action_space_selection']}")
       print(f"State space selection: {wheel_params['state_space_selection']}")
+<<<<<<< HEAD
       print(f"len_theta: {wheel_params.get('len_theta', 'default')}")
       print(f"n_spokes: {wheel_params.get('n_spokes', 'default')}")
+=======
+>>>>>>> 012450fa5bc5c37d5a4ba9a6de1031d22a31ce5a
       print("-"*80 + "\n")
       
       env = gym.wrappers.RecordEpisodeStatistics(env)
