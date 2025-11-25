@@ -63,10 +63,35 @@ def train(cfg: dict):
   # Environment setup
   ##############################
   def make_env(env_config, seed):
-      env = WheelEnv(reward_func="raw",action_space_selection="continous",state_space_selection="rimpoints")  # Your custom wrapper
-      print("env action space:", env.action_space)
-      print("env reward func:", env.reward_func)
-      print("env observation space:", env.observation_space)
+      # Extract wheel-specific parameters from config
+      wheel_params = {
+          'reward_func': env_config.get('reward_func', 'raw'),
+          'action_space_selection': env_config.get('action_space_selection', 'continous'),
+          'state_space_selection': env_config.get('state_space_selection', 'rimpoints'),
+      }
+      
+      # Add other wheel parameters if they exist in config
+      for key in ['len_theta', 'n_spokes', 'hub_width', 'hub_diameter', 'rim_radius', 
+                  'rim_area', 'rim_I_lat', 'rim_I_rad', 'rim_J_tor', 'rim_young_mod', 
+                  'rim_shear_mod', 'rim_I_warp', 'spokes_crossings', 'spokes_diameter', 
+                  'spokes_young_mod', 'number_modes', 'init_tension']:
+          if key in env_config:
+              wheel_params[key] = env_config[key]
+      
+      env = WheelEnv(**wheel_params)
+      
+      print("\n" + "-"*80)
+      print("ENVIRONMENT INITIALIZATION")
+      print("-"*80)
+      print(f"Action space: {env.action_space}")
+      print(f"Observation space: {env.observation_space}")
+      print(f"Reward function: {env.reward_func}")
+      print(f"Action space selection: {wheel_params['action_space_selection']}")
+      print(f"State space selection: {wheel_params['state_space_selection']}")
+      print(f"len_theta: {wheel_params.get('len_theta', 'default')}")
+      print(f"n_spokes: {wheel_params.get('n_spokes', 'default')}")
+      print("-"*80 + "\n")
+      
       env = gym.wrappers.RecordEpisodeStatistics(env)
       env = gym.wrappers.Autoreset(env)
       env.action_space.seed(seed)

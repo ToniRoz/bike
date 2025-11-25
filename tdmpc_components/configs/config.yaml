@@ -1,3 +1,6 @@
+defaults:
+  - _self_
+
 hydra:
   job:
     name: ${env.env_id}_s${seed}
@@ -11,13 +14,36 @@ save_interval_steps: 100000
 log_interval_steps: 10000
 
 env:
+  # Training parameters
   backend: gym
   env_id: Wheel
   num_envs: 8
   utd_ratio: 1.0
   asynchronous: True
-
   dmc: { obs_type: state }
+  
+  # WheelEnv parameters (from wheel.yaml)
+  len_theta: 100
+  n_spokes: 36
+  reward_func: raw
+  action_space_selection: continous
+  state_space_selection: rimpoints
+  
+  hub_width: 0.05
+  hub_diameter: 0.04
+  rim_radius: 0.3
+  rim_area: 100e-6
+  rim_I_lat: 1500e-12
+  rim_I_rad: 3000e-12
+  rim_J_tor: 500e-12
+  rim_young_mod: 69e9
+  rim_shear_mod: 26e9
+  rim_I_warp: 0.0
+  spokes_crossings: 3
+  spokes_diameter: 2.0e-3
+  spokes_young_mod: 210e9
+  number_modes: 40
+  init_tension: 800.0
 
 encoder:
   encoder_dim: 256
