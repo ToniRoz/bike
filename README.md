@@ -31,11 +31,11 @@ which was mostly taken as is, just adding some network parameters to the config
 
 ## Usage
 
-The scripts, 
+The scripts, </br></br>
 
-/tdmpc-components/train.py (TD-MPC2)
-train_ppo.py (PPO)
-train_rainbow.py (RAINBOW)
+/tdmpc-components/train.py (TD-MPC2)</br></br>
+train_ppo.py (PPO)</br></br>
+train_rainbow.py (RAINBOW)</br></br>
 
 serve as quick entriepoints to start a training on the respective algorithms. ppo_- and rainbow_exp.py show how to run longer experiments (hyper-parameter gridsearch).
 For a more Hydra-instanciation usage check out the colab-notebook.
