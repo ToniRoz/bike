@@ -1,0 +1,90 @@
+defaults:
+  - env: wheel
+
+hydra:
+  job:
+    name: ${env.env_id}_s${seed}
+  run:
+    dir: outputs/${hydra.job.name}/${now:%Y-%m-%d_%H-%M-%S}
+
+seed: 0
+max_steps: 1000000
+buffer_size: 300000
+save_interval_steps: 100000
+log_interval_steps: 10000
+
+env:
+  # Training parameters
+  backend: gym
+  env_id: Wheel
+  num_envs: 6
+  utd_ratio: 1.0
+  asynchronous: True
+  dmc: { obs_type: state }
+  
+  # WheelEnv parameters 
+  len_theta: 360
+  n_spokes: 36
+  reward_func: normalized
+  action_space_selection: continous
+  state_space_selection: rimpoints
+  
+  hub_width: 0.05
+  hub_diameter: 0.04
+  rim_radius: 0.3
+  rim_area: 100e-6
+  rim_I_lat: 1500e-12
+  rim_I_rad: 3000e-12
+  rim_J_tor: 500e-12
+  rim_young_mod: 69e9
+  rim_shear_mod: 26e9
+  rim_I_warp: 0.0
+  spokes_crossings: 3
+  spokes_diameter: 2.0e-3
+  spokes_young_mod: 210e9
+  number_modes: 40
+  init_tension: 800.0
+
+encoder:
+  encoder_dim: 256
+  num_encoder_layers: 2
+  learning_rate: 3e-4
+  tabulate: False
+
+world_model:
+  latent_dim: 512
+  mlp_dim: 512
+  value_dropout: 0.01
+  num_value_nets: 5
+  num_bins: 101
+  symlog_min: -10
+  symlog_max: 10
+  symlog_obs: False
+  simnorm_dim: 8
+  learning_rate: 3e-4
+  predict_continues: False
+  dtype: float32
+  max_grad_norm: 20
+  tabulate: False
+
+tdmpc2:
+  # Planning
+  mpc: True
+  horizon: 3
+  mppi_iterations: 6
+  population_size: 512
+  policy_prior_samples: 24
+  num_elites: 64
+  min_plan_std: 0.05
+  max_plan_std: 2
+  temperature: 1.0
+  # Optimization
+  batch_size: 256
+  discount: 0.99
+  rho: 0.5
+  consistency_coef: 20
+  reward_coef: 0.1
+  continue_coef: 1.0
+  value_coef: 0.1
+  entropy_coef: 1e-4
+  tau: 0.01
