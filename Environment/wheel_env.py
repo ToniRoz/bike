@@ -17,7 +17,7 @@ add new state spaces:
      add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
      things to add:     wheel parameters
                         len theta and n spokes need to be connected to statespace (done)
-                        add option for succes reward and tension max (implement to the right units and compare to calc tension)
+                        add option for success reward and tension max (implement to the right units and compare to calc tension)
                         starter tension
      try changing the end goal to depending on total displacement
      try adding fourier state
@@ -348,7 +348,7 @@ class WheelEnv(gym.Env):
             elif step_improvement <= 0:
                 reward = -1.0
         
-        elif self.reward_func == "spoke":
+        elif self.reward_func == "spokes":
             if np.all(np.abs(self.previous_turns) >= np.abs(self.spoke_turns)):
                 reward = 1
             elif np.all(np.abs(self.previous_turns) <= np.abs(self.spoke_turns)):
