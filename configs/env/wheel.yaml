@@ -1,10 +1,12 @@
-# @package _group_
+# @package _global_.env
 _target_: Environment.wheel_env.WheelEnv
 len_theta: 100
 n_spokes: 36
 reward_func: raw #percentage, normalized, raw, spokes
 action_space_selection: discrete #continous
-state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes
+state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes fourier
+n_harmonics: 20
+include_tan_displacement: false
 hub_width: 0.05
 hub_diameter: 0.04
 rim_radius: 0.3

@@ -1,5 +1,6 @@
 defaults:
   - env: wheel
+  - _self_
 
 # Experiment settings
 id: rainbow_wheel_experiment
@@ -51,7 +52,7 @@ evaluation_episodes: 10
 evaluation_size: 500
 
 # Checkpointing
-checkpoint_interval: 100000
+checkpoint_interval: 500000
 
 # Miscellaneous
 reward_clip: 0
