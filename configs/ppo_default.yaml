@@ -50,7 +50,7 @@ eval_ckpt_name: ""
 render_mode: false
 
 # Device
-device: cpu
+device: cuda
 
 # Miscellaneous
 verbose: false

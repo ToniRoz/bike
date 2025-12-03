@@ -194,6 +194,7 @@ class RainbowTrainer(BaseTrainer):
                                 self.writer.add_scalar(f'environment/wheel improvement', wheel_change, glob_step)
                                 self.writer.add_scalar(f'environment/tension improvement', tension_change, glob_step)
                                 self.writer.add_scalar(f'environment/turn improvement', turn_change, glob_step)
+                                self.writer.add_scalar(f'environment/final state norm', current_norm, glob_step)
                             else:
                                 self.log(f"Warning: 'raw state norm' missing in info at episode {episode_counter}")
                     except Exception as e:
@@ -205,6 +206,7 @@ class RainbowTrainer(BaseTrainer):
                     state, info = self.env.reset()
                     self.agent.reset_episode()
                     first_state_norm = info['raw state norm']
+                    self.writer.add_scalar(f'environment/initial state norm', first_state_norm, glob_step)
                     first_tensions = np.linalg.norm(info['spoke tensions'])
                     first_turns = np.sum(abs(info['spoke turns']))
                     done = False 
@@ -391,8 +393,10 @@ class PPOTrainer(BaseTrainer):
             self.agent.reset_episode()
             
             first_state_norm = info['raw state norm']
-            first_tensions = np.linalg.norm(info['spoke tensions']-800)
+            first_tensions = np.linalg.norm(info['spoke tensions'])
             first_turns = np.sum(abs(info['spoke turns']))
+            self.writer.add_scalar(f'environment/initial state norm', first_state_norm, t_so_far)
+            
 
             eps_reward = 0
             eps_length = 0
@@ -441,6 +445,7 @@ class PPOTrainer(BaseTrainer):
                         self.writer.add_scalar(f'environment/wheel improvement', wheel_change, t_so_far)
                         self.writer.add_scalar(f'environment/turn improvement', turn_change, t_so_far)
                         self.writer.add_scalar(f'environment/tension improvement', tension_change, t_so_far)
+                        self.writer.add_scalar(f'environment/final state norm', current_norm, t_so_far)
                     
                     break
             

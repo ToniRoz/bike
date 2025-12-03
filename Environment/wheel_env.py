@@ -15,17 +15,19 @@ add new state spaces:
      look through the whole code and remove / edit gpt comments (started)
      name variables clearer for better readability (done)
      add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
-     things to add:     wheel parameters
+     things to add:     wheel parameters (done)
                         len theta and n spokes need to be connected to statespace (done)
                         add option for success reward and tension max (implement to the right units and compare to calc tension)
                         starter tension
-     try changing the end goal to depending on total displacement
      try adding fourier state (done)
      get rid of the 800 in tensionstate (and track down where we need to change tracking for it and why tdmpc turns does not work)(done)
      last to finish:
-        add penalty 
-        add different stoping condition
-        add option for tangential displacement include
+        normalize raw by statesize or use integral formulation
+        add penalty (most sources speak of about 100-120 kgf max so i guess we should stop at 1000N)(done but needs adjustment of values)
+        add different stoping condition (where spokes are within a certain tension of each other and total and displacment is under threshold)(sorta done)
+        add option for tangential displacement include (done)
+        add absolute logging
+        take a last look at reward functions and document
      
      make it speak when init
      a render option would be nice
@@ -154,7 +156,7 @@ class WheelEnv(gym.Env):
 
                 #reward function 
                 max_tension_penalty = False,
-                max_tension_threshold = 0,
+                max_tension_threshold = 1000,
                 include_tan_displacement = False,
                 goal_condition ="modulo", 
                 reward_func="percentage", 
@@ -198,7 +200,10 @@ class WheelEnv(gym.Env):
         self.reward_func = reward_func
         self.include_tan_displacement = include_tan_displacement
 
+        self.max_tension_threshold = max_tension_threshold
+        self.max_tension_penalty = max_tension_penalty
 
+        self.goal_condition = goal_condition 
         self.random_spoke_n = random_spoke_n
         self.random_spoke_turns_max = random_spoke_turns_max
 
@@ -455,12 +460,21 @@ class WheelEnv(gym.Env):
         self.episode_counter += 1
         self.global_step_count +=1
         
+        if self.max_tension_penalty:
+            if np.any(self.tensionchanges + 800) > self.max_tension_threshold: #implement starter tension as variable
+                reward = reward - 10 
+
         # Termination conditions
         truncated = self.episode_counter > 40  # Time limit
-        terminated = state_norm <= self.best_state_norm # 'best' state reached
+        if self.goal_condition=="modulo":
+            terminated = state_norm <= self.best_state_norm # 'best' state reached
+
+        else: # absolute displacement of maximum 0.2 mm
+            if np.all(wheel_displacement) < 0.2 and np.all(abs(self.tensionchanges)) < 50:
+                terminated = True
         
         if terminated:
-            reward = 50
+            reward = 50 # need to take a look at this
 
 
         
