@@ -213,9 +213,9 @@ class WheelEnv(gym.Env):
         self.init_tension = init_tension
 
         if self.include_tan_displacement:
-            stacksize = 3
+            self.stacksize = 3
         else:
-            stacksize = 2
+            self.stacksize = 2
         
 
 
@@ -230,7 +230,7 @@ class WheelEnv(gym.Env):
             self.observation_space = gym.spaces.Box(
                 low=-50.0, 
                 high=50.0, 
-                shape=(len_theta*stacksize,), 
+                shape=(len_theta*self.stacksize,), 
                 dtype=np.float32
             )
         
@@ -355,15 +355,16 @@ class WheelEnv(gym.Env):
             wheel_displacement, tensions, fourier_coeffs = self.wheel_calc(self.tensionchanges,True)
         else:
             wheel_displacement, tensions = self.wheel_calc(self.tensionchanges,False)
-        state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
+        stacked_displacement = wheel_displacement.reshape(-1, self.stack_size)
+        state_norm = np.sqrt(np.trapz(np.sum(stacked_displacement**2, axis=1), self.theta))
         self.tensions = tensions
         self.first_tensions = self.tensions
         self.last_state_norm = state_norm
         self.first_state_norm = state_norm
         
         # calculate an estimation of a good endstate by taking the residuals of turns when minimized by discrete adjsutment-step-size
-        best_displacement, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn),return_fourier=False)
-        self.best_state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
+        #best_displacement, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn),return_fourier=False)
+        #self.best_state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
         
         info = {"spoke turns": self.spoke_turns,
                 "raw state norm": state_norm,
@@ -429,7 +430,8 @@ class WheelEnv(gym.Env):
             wheel_displacement, tensions, fourier_coeffs = self.wheel_calc(self.tensionchanges,True)
         else:
             wheel_displacement, tensions= self.wheel_calc(self.tensionchanges,False)
-        state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
+        stacked_displacement = wheel_displacement.reshape(-1, self.stack_size)
+        state_norm = np.sqrt(np.trapz(np.sum(stacked_displacement**2, axis=1), self.theta))
         wheel_improvement = 100 * ( self.first_state_norm - state_norm ) / (abs(self.first_state_norm) + 1e-6)
         step_improvement = 100 * (self.last_state_norm - state_norm) / (abs(self.last_state_norm) + 1e-6)
         
