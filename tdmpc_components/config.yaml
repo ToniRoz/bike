@@ -28,6 +28,11 @@ env:
   reward_func: normalized
   action_space_selection: continous
   state_space_selection: rimpoints
+
+  n_harmonics: 20
+  include_tan_displacement: false
+  max_tension_threshold: 1000
+  max_tension_penalty: true
   
   hub_width: 0.05
   hub_diameter: 0.04

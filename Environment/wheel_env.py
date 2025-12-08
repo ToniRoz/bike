@@ -26,7 +26,7 @@ add new state spaces:
         add penalty (most sources speak of about 100-120 kgf max so i guess we should stop at 1000N)(done but needs adjustment of values)
         add different stoping condition (where spokes are within a certain tension of each other and total and displacment is under threshold)(sorta done)
         add option for tangential displacement include (done)
-        add absolute logging
+        add absolute logging (done)
         take a last look at reward functions and document
      
      make it speak when init
@@ -158,7 +158,6 @@ class WheelEnv(gym.Env):
                 max_tension_penalty = False,
                 max_tension_threshold = 1000,
                 include_tan_displacement = False,
-                goal_condition ="modulo", 
                 reward_func="raw", 
                 action_space_selection="continous",
                 state_space_selection = "rimpoints",
@@ -202,8 +201,7 @@ class WheelEnv(gym.Env):
 
         self.max_tension_threshold = max_tension_threshold
         self.max_tension_penalty = max_tension_penalty
-
-        self.goal_condition = goal_condition 
+ 
         self.random_spoke_n = random_spoke_n
         self.random_spoke_turns_max = random_spoke_turns_max
 
@@ -433,7 +431,7 @@ class WheelEnv(gym.Env):
             wheel_displacement, tensions= self.wheel_calc(self.tensionchanges,False)
         state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
         wheel_improvement = 100 * ( self.first_state_norm - state_norm ) / (abs(self.first_state_norm) + 1e-6)
-        step_improvement = 100 * (self.first_state_norm - state_norm) / (abs(self.last_state_norm) + 1e-6)
+        step_improvement = 100 * (self.last_state_norm - state_norm) / (abs(self.last_state_norm) + 1e-6)
         
         # Compute improvement reward
         if self.reward_func == "raw":
@@ -464,15 +462,15 @@ class WheelEnv(gym.Env):
 
         # Termination conditions
         truncated = self.episode_counter > 40  # Time limit
-        if self.goal_condition=="modulo":
-            terminated = state_norm <= self.best_state_norm # 'best' state reached
+        #if self.goal_condition=="modulo":
+        #    terminated = state_norm <= self.best_state_norm # 'best' state reached
 
-        else: # absolute displacement of maximum 0.2 mm
-            if np.all(wheel_displacement) < 0.2 and np.all(abs(tensions-self.init_tension)) < 50:
-                terminated = True
+        #else: # absolute displacement of maximum 0.2 mm
+        if np.all(abs(wheel_displacement)) < 0.2 and np.all(abs(tensions-self.init_tension)) < 50:
+            terminated = True
         
         if terminated:
-            reward = 50 # need to take a look at this
+            reward = 10 # need to take a look at this
 
 
         

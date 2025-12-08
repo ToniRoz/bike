@@ -2,13 +2,13 @@
 _target_: Environment.wheel_env.WheelEnv
 len_theta: 100
 n_spokes: 36
-reward_func: raw #percentage, normalized, raw, spokes
-action_space_selection: discrete #continous
-state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes fourier
+reward_func: raw #normalized, raw, spokes
+action_space_selection: discrete #continous # all_spokes
+state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes fourier fourier_and_spokes
 n_harmonics: 20
 include_tan_displacement: false
 max_tension_threshold: 1000
-max_tension_penalty: false
+max_tension_penalty: true
 hub_width: 0.05
 hub_diameter: 0.04
 rim_radius: 0.3
