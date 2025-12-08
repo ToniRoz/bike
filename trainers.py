@@ -184,8 +184,12 @@ class RainbowTrainer(BaseTrainer):
                             # Only compute wheel_change if info exists
                             if 'raw state norm' in info:
                                 current_norm = info['raw state norm']
-                                current_tension = np.linalg.norm(info['spoke tensions'])
+                                current_tension = np.sum(abs(info['tensions delta']))
                                 current_turns = np.sum(abs(info['spoke turns']))
+
+                                current_tensions_max = np.max(abs(info['tensions delta']))
+                                current_turns_max = np.max(abs(info['spoke turns']))
+
                                 wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                                 turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
                                 tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
@@ -195,6 +199,11 @@ class RainbowTrainer(BaseTrainer):
                                 self.writer.add_scalar(f'environment/tension improvement', tension_change, glob_step)
                                 self.writer.add_scalar(f'environment/turn improvement', turn_change, glob_step)
                                 self.writer.add_scalar(f'environment/final state norm', current_norm, glob_step)
+
+                                self.writer.add_scalar(f'environment/final tension deltas max', current_tensions_max, glob_step)
+                                self.writer.add_scalar(f'environment/final tension deltas sum', current_tension, glob_step)
+                                self.writer.add_scalar(f'environment/final turns max', current_turns_max, glob_step)
+                                self.writer.add_scalar(f'environment/final turns sum', current_turns, glob_step)
                             else:
                                 self.log(f"Warning: 'raw state norm' missing in info at episode {episode_counter}")
                     except Exception as e:
@@ -207,7 +216,11 @@ class RainbowTrainer(BaseTrainer):
                     self.agent.reset_episode()
                     first_state_norm = info['raw state norm']
                     self.writer.add_scalar(f'environment/initial state norm', first_state_norm, glob_step)
-                    first_tensions = np.linalg.norm(info['spoke tensions'])
+                    self.writer.add_scalar(f'environment/initial tension deltas sum', np.sum(np.abs(info['tensions delta'])),glob_step) 
+                    self.writer.add_scalar(f'environment/initial tension deltas max', np.max(np.abs(info['tensions delta'])),glob_step)
+                    self.writer.add_scalar(f'environment/initial turns sum', np.sum(np.abs(info['spoke turns'])), glob_step)
+                    self.writer.add_scalar(f'environment/initial turns max', np.max(np.abs(info['spoke turns'])), glob_step)
+                    first_tensions = np.sum(np.abs(info['tensions delta']))
                     first_turns = np.sum(abs(info['spoke turns']))
                     done = False 
 
@@ -393,9 +406,13 @@ class PPOTrainer(BaseTrainer):
             self.agent.reset_episode()
             
             first_state_norm = info['raw state norm']
-            first_tensions = np.linalg.norm(info['spoke tensions'])
+            first_tensions = np.sum(abs(info['tensions delta']))
             first_turns = np.sum(abs(info['spoke turns']))
             self.writer.add_scalar(f'environment/initial state norm', first_state_norm, t_so_far)
+            self.writer.add_scalar(f'environment/initial tension deltas sum', np.sum(np.abs(info['tensions delta'])),t_so_far) 
+            self.writer.add_scalar(f'environment/initial tension deltas max', np.max(np.abs(info['tensions delta'])),t_so_far)
+            self.writer.add_scalar(f'environment/initial turns sum', np.sum(np.abs(info['spoke turns'])), t_so_far)
+            self.writer.add_scalar(f'environment/initial turns max', np.max(np.abs(info['spoke turns'])), t_so_far)
             
 
             eps_reward = 0
@@ -433,7 +450,9 @@ class PPOTrainer(BaseTrainer):
                 
                 if done:
                     current_norm = info['raw state norm']
-                    current_tension = np.linalg.norm(info['spoke tensions'])
+                    current_tensions_max = np.max(abs(info['tensions delta']))
+                    current_turns_max = np.max(abs(info['spoke turns']))
+                    current_tension = np.sum(abs(info['tensions delta']))
                     current_turns = np.sum(abs(info['spoke turns']))
                     wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                     turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
@@ -446,6 +465,11 @@ class PPOTrainer(BaseTrainer):
                         self.writer.add_scalar(f'environment/turn improvement', turn_change, t_so_far)
                         self.writer.add_scalar(f'environment/tension improvement', tension_change, t_so_far)
                         self.writer.add_scalar(f'environment/final state norm', current_norm, t_so_far)
+
+                        self.writer.add_scalar(f'environment/final tension deltas max', current_tensions_max, t_so_far)
+                        self.writer.add_scalar(f'environment/final tension deltas sum', current_tension, t_so_far)
+                        self.writer.add_scalar(f'environment/final turns max', current_turns_max, t_so_far)
+                        self.writer.add_scalar(f'environment/final turns sum', current_turns, t_so_far)
                     
                     break
             

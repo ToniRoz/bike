@@ -159,7 +159,7 @@ class WheelEnv(gym.Env):
                 max_tension_threshold = 1000,
                 include_tan_displacement = False,
                 goal_condition ="modulo", 
-                reward_func="percentage", 
+                reward_func="raw", 
                 action_space_selection="continous",
                 state_space_selection = "rimpoints",
                 n_harmonics = 20,
@@ -211,6 +211,8 @@ class WheelEnv(gym.Env):
 
         self.adjustment_per_turn = 25.4 / 56 / 1000
         self.reward_func = reward_func
+
+        self.init_tension = init_tension
 
         if self.include_tan_displacement:
             stacksize = 3
@@ -355,7 +357,7 @@ class WheelEnv(gym.Env):
             wheel_displacement, tensions, fourier_coeffs = self.wheel_calc(self.tensionchanges,True)
         else:
             wheel_displacement, tensions = self.wheel_calc(self.tensionchanges,False)
-        state_norm = np.linalg.norm(wheel_displacement)
+        state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
         self.tensions = tensions
         self.first_tensions = self.tensions
         self.last_state_norm = state_norm
@@ -363,12 +365,12 @@ class WheelEnv(gym.Env):
         
         # calculate an estimation of a good endstate by taking the residuals of turns when minimized by discrete adjsutment-step-size
         best_displacement, best_tensions = self.wheel_calc(tensionchanges=((self.spoke_turns % 0.1) * self.adjustment_per_turn),return_fourier=False)
-        self.best_state_norm = np.linalg.norm(best_displacement)
+        self.best_state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
         
         info = {"spoke turns": self.spoke_turns,
                 "raw state norm": state_norm,
                 "best state norm": self.best_state_norm,
-                "spoke tensions": self.tensions,
+                "tensions delta": self.tensions - self.init_tension,
                 }
 
         
@@ -377,7 +379,7 @@ class WheelEnv(gym.Env):
             return tensions.astype(np.float32), info
         
         if self.state_space_selection == "rimandspokes":
-            combined_state = np.concatenate([wheel_displacement, tensions/100]) # we might not need to downscale this here but for now it works
+            combined_state = np.concatenate([wheel_displacement, tensions/self.init_tension]) # we might not need to downscale this here but for now it works
             return combined_state.astype(np.float32), info
         
         if self.state_space_selection == "rimpoints":
@@ -388,7 +390,7 @@ class WheelEnv(gym.Env):
     
         if self.state_space_selection == "fourier_and_spokes":
 
-            combined = np.concatenate([fourier_coeffs, tensions/100])
+            combined = np.concatenate([fourier_coeffs, tensions/self.init_tension])
             return combined.astype(np.float32), info
         
 
@@ -429,28 +431,24 @@ class WheelEnv(gym.Env):
             wheel_displacement, tensions, fourier_coeffs = self.wheel_calc(self.tensionchanges,True)
         else:
             wheel_displacement, tensions= self.wheel_calc(self.tensionchanges,False)
-        state_norm = np.linalg.norm(wheel_displacement)
+        state_norm = np.sqrt(np.trapz(np.sum(wheel_displacement**2, axis=1), self.theta))
         wheel_improvement = 100 * ( self.first_state_norm - state_norm ) / (abs(self.first_state_norm) + 1e-6)
         step_improvement = 100 * (self.first_state_norm - state_norm) / (abs(self.last_state_norm) + 1e-6)
         
         # Compute improvement reward
         if self.reward_func == "raw":
-            reward = -state_norm
-        
-        elif self.reward_func == "percentage":
-            reward = step_improvement
-
-        
-        elif self.reward_func == "normalized":
+            reward = -state_norm # needs to be normalized and/or compared with integral difference        
+       
+        elif self.reward_func == "normalized": # has risk of bad policy in continous action space
 
             if step_improvement > 0:
-                reward = 1
+                reward = 0
             elif step_improvement <= 0:
                 reward = -1.0
         
-        elif self.reward_func == "spokes":
+        elif self.reward_func == "spokes": # same problem as "normalized"
             if np.all(np.abs(self.previous_turns) >= np.abs(self.spoke_turns)):
-                reward = 1
+                reward = 0
             elif np.all(np.abs(self.previous_turns) <= np.abs(self.spoke_turns)):
                 reward = -1
 
@@ -461,7 +459,7 @@ class WheelEnv(gym.Env):
         self.global_step_count +=1
         
         if self.max_tension_penalty:
-            if np.any(self.tensionchanges + 800) > self.max_tension_threshold: #implement starter tension as variable
+            if np.any(tensions) > self.max_tension_threshold: #implement starter tension as variable
                 reward = reward - 10 
 
         # Termination conditions
@@ -470,7 +468,7 @@ class WheelEnv(gym.Env):
             terminated = state_norm <= self.best_state_norm # 'best' state reached
 
         else: # absolute displacement of maximum 0.2 mm
-            if np.all(wheel_displacement) < 0.2 and np.all(abs(self.tensionchanges)) < 50:
+            if np.all(wheel_displacement) < 0.2 and np.all(abs(tensions-self.init_tension)) < 50:
                 terminated = True
         
         if terminated:
@@ -482,15 +480,15 @@ class WheelEnv(gym.Env):
         info = {"spoke turns": self.spoke_turns,
                 "raw state norm": state_norm,
                 "improvement": wheel_improvement,
-                "spoke tensions": tensions
+                "tensions delta": tensions - self.init_tension
                 }
         
 
         if self.state_space_selection == "spoketensions":
-            return tensions.astype(np.float32), reward, terminated, truncated, info
+            return tensions.astype(np.float32)/self.init_tension, reward, terminated, truncated, info
         
         if self.state_space_selection == "rimandspokes":
-            combined_state = np.concatenate([wheel_displacement,tensions/100])
+            combined_state = np.concatenate([wheel_displacement,tensions/self.init_tension])
             return combined_state.astype(np.float32), reward, terminated, truncated, info
         
         if self.state_space_selection == "rimpoints":
@@ -501,7 +499,7 @@ class WheelEnv(gym.Env):
     
         if self.state_space_selection == "fourier_and_spokes":
 
-            combined = np.concatenate([fourier_coeffs, tensions/100])
+            combined = np.concatenate([fourier_coeffs, tensions/self.init_tension])
             return combined.astype(np.float32),reward, terminated, truncated, info
     
 
