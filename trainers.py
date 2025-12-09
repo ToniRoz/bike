@@ -189,6 +189,7 @@ class RainbowTrainer(BaseTrainer):
 
                                 current_tensions_max = np.max(abs(info['tensions delta']))
                                 current_turns_max = np.max(abs(info['spoke turns']))
+                                max_displacement = info["max disp"]
 
                                 wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                                 turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
@@ -204,6 +205,7 @@ class RainbowTrainer(BaseTrainer):
                                 self.writer.add_scalar(f'environment/final tension deltas sum', current_tension, glob_step)
                                 self.writer.add_scalar(f'environment/final turns max', current_turns_max, glob_step)
                                 self.writer.add_scalar(f'environment/final turns sum', current_turns, glob_step)
+                                self.writer.add_scalar(f'environment/wheel max', max_displacement, glob_step)
                             else:
                                 self.log(f"Warning: 'raw state norm' missing in info at episode {episode_counter}")
                     except Exception as e:
@@ -454,6 +456,7 @@ class PPOTrainer(BaseTrainer):
                     current_turns_max = np.max(abs(info['spoke turns']))
                     current_tension = np.sum(abs(info['tensions delta']))
                     current_turns = np.sum(abs(info['spoke turns']))
+                    max_displacement = info["max disp"]
                     wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                     turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
                     tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
@@ -470,6 +473,7 @@ class PPOTrainer(BaseTrainer):
                         self.writer.add_scalar(f'environment/final tension deltas sum', current_tension, t_so_far)
                         self.writer.add_scalar(f'environment/final turns max', current_turns_max, t_so_far)
                         self.writer.add_scalar(f'environment/final turns sum', current_turns, t_so_far)
+                        self.writer.add_scalar(f'environment/wheel max', max_displacement, t_so_far)
                     
                     break
             

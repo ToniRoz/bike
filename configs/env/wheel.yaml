@@ -7,7 +7,8 @@ action_space_selection: discrete #continous # all_spokes
 state_space_selection: rimandspokes #rimpoints #spoketensions rimandspokes fourier fourier_and_spokes
 n_harmonics: 20
 include_tan_displacement: false
-max_tension_threshold: 1000
+max_tension_threshold: 1200
+random_spoke_turns_max: 1
 max_tension_penalty: true
 hub_width: 0.05
 hub_diameter: 0.04

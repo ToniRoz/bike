@@ -31,7 +31,7 @@ env:
 
   n_harmonics: 20
   include_tan_displacement: false
-  max_tension_threshold: 1000
+  max_tension_threshold: 1200
   max_tension_penalty: true
   
   hub_width: 0.05
