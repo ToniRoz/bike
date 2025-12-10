@@ -190,6 +190,7 @@ class RainbowTrainer(BaseTrainer):
                                 current_tensions_max = np.max(abs(info['tensions delta']))
                                 current_turns_max = np.max(abs(info['spoke turns']))
                                 max_displacement = info["max disp"]
+                                terminated = info["terminated"]
 
                                 wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                                 turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
@@ -206,6 +207,11 @@ class RainbowTrainer(BaseTrainer):
                                 self.writer.add_scalar(f'environment/final turns max', current_turns_max, glob_step)
                                 self.writer.add_scalar(f'environment/final turns sum', current_turns, glob_step)
                                 self.writer.add_scalar(f'environment/wheel max', max_displacement, glob_step)
+                                if terminated:
+                                    self.writer.add_scalar(f'episode/terminated', 1, glob_step)
+                                else:
+                                    self.writer.add_scalar(f'episode/terminated', 0, glob_step)
+
                             else:
                                 self.log(f"Warning: 'raw state norm' missing in info at episode {episode_counter}")
                     except Exception as e:

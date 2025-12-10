@@ -150,7 +150,7 @@ class WheelEnv(gym.Env):
                 n_spokes=36,
 
                 random_spoke_n = 5,
-                random_spoke_turns_max = 2,
+                random_spoke_turns_max = 1,
 
                 render=False,
 
@@ -465,7 +465,7 @@ class WheelEnv(gym.Env):
 
         if self.max_tension_penalty:
             if np.any(tensions > self.max_tension_threshold): #implement starter tension as variable
-                reward = reward - 10
+                reward = reward - 20
                 truncated = True
 
         # Termination conditions
@@ -476,7 +476,7 @@ class WheelEnv(gym.Env):
         #else: # absolute displacement of maximum 0.3 mm, tension between 70 and 90kg and within 10% of each other 
         if np.all(abs(wheel_displacement)) < 0.3 and np.all((tensions >= 700) & (tensions <= 900)) and (np.ptp(tensions) <= 0.1 * np.mean(tensions)):
             terminated = True
-            reward = 10
+            reward = 20
         
 
 
@@ -486,7 +486,8 @@ class WheelEnv(gym.Env):
                 "raw state norm": state_norm,
                 "improvement": wheel_improvement,
                 "tensions delta": tensions - self.init_tension,
-                "max disp": displacement_max
+                "max disp": displacement_max,
+                "terminated": terminated
                 }
         
 
@@ -580,12 +581,12 @@ class WheelEnv(gym.Env):
             if self.include_tan_displacement:   
                 tot_def = wheel_displacement.reshape(-1, 3)
                 fourier_features = compute_fourier_features(tot_def[:, :2], n_harmonics=self.n_harmonics)
-                return wheel_displacement, tensions, fourier_features
+                return wheel_displacement, tensions + self.init_tension, fourier_features
 
             else:
                 tot_def = wheel_displacement.reshape(-1, 2)
                 fourier_features = compute_fourier_features(tot_def, n_harmonics=self.n_harmonics)
-                return wheel_displacement, tensions, fourier_features
+                return wheel_displacement, tensions + self.init_tension, fourier_features
         
         return wheel_displacement, tensions + self.init_tension
 
