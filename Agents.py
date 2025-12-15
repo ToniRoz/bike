@@ -689,32 +689,37 @@ class ActorCritic(nn.Module):
 
 
 
+import torch
+import torch.nn as nn
+import numpy as np
+from collections import deque
+
 class PPOAgent:
     def __init__(
-            self, 
-            obs_dim, 
-            action_dim, 
-            hidden_dim, 
-            lr_actor, 
-            lr_critic, 
-            continuous_action_space=False, 
-            num_epochs=10, 
-            eps_clip=0.2, 
-            action_std_init=0.6, 
-            gamma=0.99,
-            entropy_coef=0.01,
-            value_loss_coef=0.5,
-            batch_size=64,
-            max_grad_norm=0.5,
-            device='cpu',
-            # NEW: Recurrent parameters
-            use_recurrent=False,
-            recurrent_type='lstm',
-            recurrent_hidden_dim=128,
-            recurrent_layers=1,
-            recurrent_sequence_length=16,
-            recurrent_dropout=0.0
-        ):
+        self, 
+        obs_dim, 
+        action_dim, 
+        hidden_dim, 
+        lr_actor, 
+        lr_critic, 
+        continuous_action_space=False, 
+        num_epochs=10, 
+        eps_clip=0.2, 
+        action_std_init=0.6, 
+        gamma=0.99,
+        entropy_coef=0.01,
+        value_loss_coef=0.5,
+        batch_size=64,
+        max_grad_norm=0.5,
+        device='cpu',
+        # Recurrent parameters
+        use_recurrent=False,
+        recurrent_type='lstm',
+        recurrent_hidden_dim=128,
+        recurrent_layers=1,
+        recurrent_sequence_length=16,
+        recurrent_dropout=0.0
+    ):
         self.gamma = gamma
         self.num_epochs = num_epochs
         self.batch_size = batch_size
@@ -729,7 +734,7 @@ class PPOAgent:
         self.continuous_action_space = continuous_action_space
         self.device = device
 
-        # NEW: Recurrent settings
+        # Recurrent settings
         self.use_recurrent = use_recurrent
         self.recurrent_sequence_length = recurrent_sequence_length
         self.recurrent_type = recurrent_type
@@ -741,163 +746,129 @@ class PPOAgent:
             print(f"      - Recurrent hidden dim: {recurrent_hidden_dim}")
             print(f"      - Recurrent layers: {recurrent_layers}")
             
-            # Initialize observation history buffer
+            # Observation history buffer
             self.obs_history = deque(maxlen=recurrent_sequence_length)
             self.current_hidden_state = None
 
-        # Create policy network (with conditional recurrent support)
+        # Create policy network
         self.policy = ActorCritic(
-            obs_dim, 
-            action_dim, 
-            hidden_dim, 
+            obs_dim,
+            action_dim,
+            hidden_dim,
             continuous_action_space=continuous_action_space,
             action_std_init=action_std_init,
             device=device,
-            # Pass recurrent parameters
             use_recurrent=use_recurrent,
             recurrent_type=recurrent_type,
             recurrent_hidden_dim=recurrent_hidden_dim,
             recurrent_layers=recurrent_layers,
             recurrent_dropout=recurrent_dropout
-        )
+        ).to(device)
 
-        self.optimizer = torch.optim.Adam([
+        # Optimizer
+        optimizer_params = [
             {'params': self.policy.feature_extractor.parameters()},
             {'params': self.policy.actor_head.parameters(), 'lr': lr_actor},
             {'params': self.policy.critic_head.parameters(), 'lr': lr_critic}
-        ])
-
+        ]
+        if use_recurrent:
+            optimizer_params.append({'params': self.policy.recurrent.parameters()})
+        
+        self.optimizer = torch.optim.Adam(optimizer_params)
         self.buffer = RolloutBuffer()
         self.mse_loss = nn.MSELoss()
 
     def reset_episode(self):
-        """Reset episode-specific state (important for recurrent networks!)"""
+        """Reset recurrent states"""
         if self.use_recurrent:
             self.obs_history.clear()
-            self.current_hidden_state = self.policy.reset_hidden_state(batch_size=1)
+            self.current_hidden_state = self.policy.reset_hidden_state(batch_size=1).to(self.device)
 
     def select_action(self, obs, deterministic=False):
-        """
-        Select action - automatically handles recurrent vs standard
-        
-        Args:
-            obs: Current observation
-            deterministic: If True, select deterministic action
-            
-        Returns:
-            action, log_prob, value (same interface as before)
-        """
+        """Select action (handles recurrent vs standard)"""
+        if isinstance(obs, np.ndarray):
+            obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
+        else:
+            obs_tensor = obs.to(self.device)
+
         if self.use_recurrent:
-            # Convert observation to tensor
-            if isinstance(obs, np.ndarray):
-                obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
-            else:
-                obs_tensor = obs
-            
-            # Add to history
             self.obs_history.append(obs_tensor)
-            
-            # Pad if needed
             while len(self.obs_history) < self.recurrent_sequence_length:
                 self.obs_history.insert(0, torch.zeros_like(obs_tensor))
-            
-            # Stack into sequence
             obs_seq = torch.stack(list(self.obs_history)).unsqueeze(0)  # (1, seq_len, obs_dim)
-            
-            # Select action with hidden state
+
             result = self.policy.select_action(obs_seq, self.current_hidden_state, deterministic)
-            
-            if len(result) == 4:  # Recurrent returns 4 values
+            if len(result) == 4:
                 action, log_prob, value, self.current_hidden_state = result
-            else:  # Should not happen but handle gracefully
+            else:
                 action, log_prob, value = result
         else:
-            # Standard action selection
-            result = self.policy.select_action(obs, deterministic=deterministic)
-            action, log_prob, value = result
+            action, log_prob, value = self.policy.select_action(obs_tensor, deterministic=deterministic)
         
         return action, log_prob, value
 
     def compute_returns(self):
-        """Compute discounted returns (unchanged)"""
+        """Compute discounted rewards"""
         returns = []
         discounted_reward = 0
-
         for reward, done in zip(reversed(self.buffer.rewards), reversed(self.buffer.dones)):
             if done:
                 discounted_reward = 0
             discounted_reward = reward + self.gamma * discounted_reward
             returns.insert(0, discounted_reward)
-
-        returns = np.array(returns, dtype=np.float32)
-        returns = torch.flatten(torch.from_numpy(returns).float()).to(self.device)
+        returns = torch.tensor(returns, dtype=torch.float32).to(self.device)
         return returns
 
     def update_policy(self):
-        """Update policy using PPO (handles both recurrent and standard)"""
+        """PPO update (recurrent or standard)"""
         rewards_to_go = self.compute_returns()
-
-        states = torch.from_numpy(np.array(self.buffer.states)).float().to(self.device)
-        actions = torch.from_numpy(np.array(self.buffer.actions)).float().to(self.device)
-        old_logprobs = torch.from_numpy(np.array(self.buffer.logprobs)).float().to(self.device)
-        state_vals = torch.from_numpy(np.array(self.buffer.state_values)).float().to(self.device)
+        states = torch.tensor(np.array(self.buffer.states), dtype=torch.float32).to(self.device)
+        actions = torch.tensor(np.array(self.buffer.actions), dtype=torch.float32).to(self.device)
+        old_logprobs = torch.tensor(np.array(self.buffer.logprobs), dtype=torch.float32).to(self.device)
+        state_vals = torch.tensor(np.array(self.buffer.state_values), dtype=torch.float32).to(self.device)
 
         advantages = rewards_to_go - state_vals
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-6)
 
         for _ in range(self.num_epochs):
-            # Generate random indices for minibatch
-            indices = np.random.permutation(len(self.buffer.states))
-
+            indices = np.random.permutation(len(states))
             for start_idx in range(0, len(states), self.batch_size):
                 end_idx = start_idx + self.batch_size
-                batch_indices = indices[start_idx:end_idx]
+                batch_idx = indices[start_idx:end_idx]
 
-                batch_states = states[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_logprobs = old_logprobs[batch_indices]
-                batch_advantages = advantages[batch_indices]
-                batch_rewards_to_go = rewards_to_go[batch_indices]
-                
-                # Evaluate old actions and values
+                batch_states = states[batch_idx]
+                batch_actions = actions[batch_idx]
+                batch_old_logprobs = old_logprobs[batch_idx]
+                batch_advantages = advantages[batch_idx]
+                batch_rewards_to_go = rewards_to_go[batch_idx]
+
                 if self.use_recurrent:
-                    # Add sequence dimension for recurrent processing
+                    # Add sequence dimension
                     state_values, logprobs, dist_entropy = self.policy.evaluate_actions(
-                        batch_states.unsqueeze(1),  # Add seq_len dimension
-                        batch_actions
+                        batch_states.unsqueeze(1), batch_actions
                     )
                 else:
                     state_values, logprobs, dist_entropy = self.policy.evaluate_actions(
-                        batch_states, 
-                        batch_actions
+                        batch_states, batch_actions
                     )
 
-                # Finding the ratio (pi_theta / pi_theta_old)
                 ratios = torch.exp(logprobs - batch_old_logprobs.squeeze(-1))
-
-                # Finding Surrogate Loss
                 surr1 = ratios * batch_advantages
-                surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * batch_advantages
+                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * batch_advantages
 
-                # Final loss of clipped objective PPO
                 actor_loss = -torch.min(surr1, surr2).mean()
                 critic_loss = 0.5 * self.mse_loss(state_values.squeeze(), batch_rewards_to_go)
                 loss = actor_loss + self.value_loss_coef * critic_loss - self.entropy_coef * dist_entropy.mean()
 
-                # Calculate gradients and backpropagate
                 self.optimizer.zero_grad()
                 loss.backward()
-                
-                # Gradient clipping (important for recurrent networks)
                 if self.max_grad_norm > 0:
                     torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-                
                 self.optimizer.step()
-        
+
         self.buffer.clear()
 
     def save(self, path):
-        """Save model checkpoint"""
         checkpoint = {
             'policy': self.policy.state_dict(),
             'optimizer': self.optimizer.state_dict(),
@@ -908,98 +879,18 @@ class PPOAgent:
                 'continuous_action_space': self.continuous_action_space,
             }
         }
-        
         if self.use_recurrent:
             checkpoint['config'].update({
                 'recurrent_type': self.recurrent_type,
                 'recurrent_sequence_length': self.recurrent_sequence_length,
             })
-        
         torch.save(checkpoint, path)
         print(f"[PPOAgent] Model saved to {path}")
 
     def load(self, path, load_optimizer=True):
-        """Load model checkpoint"""
         checkpoint = torch.load(path, map_location=self.device)
-        
         self.policy.load_state_dict(checkpoint['policy'])
-        
         if load_optimizer and 'optimizer' in checkpoint:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
-        
         print(f"[PPOAgent] Model loaded from {path}")
 
-    def evaluate(self, env, num_episodes=10, deterministic=True, render=False, max_steps=None):
-        """
-        Evaluate the agent
-        
-        Args:
-            env: Gym environment
-            num_episodes: Number of episodes to evaluate
-            deterministic: Use deterministic policy
-            render: Whether to render
-            max_steps: Maximum steps per episode
-            
-        Returns:
-            dict with evaluation metrics
-        """
-        self.policy.eval()
-        
-        episode_rewards = []
-        episode_lengths = []
-        
-        for episode in range(num_episodes):
-            obs, _ = env.reset() if isinstance(env.reset(), tuple) else (env.reset(), {})
-            self.reset_episode()  # Important for recurrent networks!
-            
-            episode_reward = 0
-            episode_length = 0
-            done = False
-            
-            while not done:
-                if render:
-                    env.render()
-                
-                # Select action
-                action, _, _ = self.select_action(obs, deterministic=deterministic)
-                
-                # Take action
-                step_result = env.step(action)
-                if len(step_result) == 5:
-                    next_obs, reward, terminated, truncated, info = step_result
-                    done = terminated or truncated
-                else:
-                    next_obs, reward, done, info = step_result
-                
-                episode_reward += reward
-                episode_length += 1
-                obs = next_obs
-                
-                if max_steps is not None and episode_length >= max_steps:
-                    break
-            
-            episode_rewards.append(episode_reward)
-            episode_lengths.append(episode_length)
-            
-            if (episode + 1) % max(1, num_episodes // 10) == 0:
-                print(f"  Episode {episode + 1}/{num_episodes}: "
-                      f"Reward = {episode_reward:.2f}, Length = {episode_length}")
-        
-        self.policy.train()
-        
-        results = {
-            'mean_reward': np.mean(episode_rewards),
-            'std_reward': np.std(episode_rewards),
-            'min_reward': np.min(episode_rewards),
-            'max_reward': np.max(episode_rewards),
-            'mean_length': np.mean(episode_lengths),
-            'episode_rewards': episode_rewards,
-            'episode_lengths': episode_lengths
-        }
-        
-        print(f"\n[Evaluation Results]")
-        print(f"  Mean Reward: {results['mean_reward']:.2f} ± {results['std_reward']:.2f}")
-        print(f"  Min/Max Reward: {results['min_reward']:.2f} / {results['max_reward']:.2f}")
-        print(f"  Mean Episode Length: {results['mean_length']:.1f}")
-        
-        return results

@@ -466,6 +466,7 @@ class PPOTrainer(BaseTrainer):
                     wheel_change = 100 * (first_state_norm - current_norm) / max(abs(first_state_norm), 1e-15)
                     turn_change = 100 * (first_turns - current_turns) / max(abs(first_turns), 1e-15)
                     tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
+                    terminated = info["terminated"]
 
                     if self.writer:
                         self.writer.add_scalar(f'episode/return', eps_reward, t_so_far)
@@ -480,6 +481,10 @@ class PPOTrainer(BaseTrainer):
                         self.writer.add_scalar(f'environment/final turns max', current_turns_max, t_so_far)
                         self.writer.add_scalar(f'environment/final turns sum', current_turns, t_so_far)
                         self.writer.add_scalar(f'environment/wheel max', max_displacement, t_so_far)
+                        if terminated:
+                            self.writer.add_scalar(f'episode/terminated', 1, t_so_far)
+                        else:
+                            self.writer.add_scalar(f'episode/terminated', 0, t_so_far)
                     
                     break
             

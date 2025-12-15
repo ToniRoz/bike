@@ -21,7 +21,7 @@ value_loss_coef: 0.5
 max_grad_norm: 0.5
 
 # Network architecture
-hidden_dim: 64
+hidden_dim: 500
 lr_actor: 0.0003
 lr_critic: 0.001
 activation: tanh
@@ -29,8 +29,8 @@ activation: tanh
 # recurrent
 use_recurrent: false
 recurrent_type: 'gru' # lstm or gru
-recurrent_hidden_dim: 256         # Larger for complex task
-recurrent_layers: 2               # 2 layers for better learning
+recurrent_hidden_dim: 500         # Larger for complex task
+recurrent_layers: 1               # 2 layers for better learning
 recurrent_sequence_length: 3     
 recurrent_dropout: 0.1            # Dropout between layers
 
