@@ -589,5 +589,3 @@ class WheelEnv(gym.Env):
                 return wheel_displacement, tensions + self.init_tension, fourier_features
         
         return wheel_displacement, tensions + self.init_tension
-
-
