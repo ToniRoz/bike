@@ -12,10 +12,7 @@ from collections import deque
 
 from Models import DQN, RecurrentDQN
 
-"""
-Todo:
-    add lstm option to rainbow and ppo 
-"""
+
 
 
 
@@ -218,7 +215,7 @@ class RainbowAgent:
     
     def _learn_standard(self, memory, idxs, states, actions, returns, next_states, nonterminals, weights):
         """Standard (non-recurrent) learning step"""
-        # Reshape states for network input
+
         batch_size = states.shape[0]
         # states shape: (batch_size, history_length, *state_shape)
         # Flatten to (batch_size, history_length * state_dim)
@@ -494,7 +491,7 @@ class ActorCritic(nn.Module):
         continuous_action_space=False, 
         action_std_init=0.6,
         device='cpu',
-        # NEW: Recurrent parameters
+        # Recurrent parameters
         use_recurrent=False,
         recurrent_type='lstm',
         recurrent_hidden_dim=128,
@@ -508,7 +505,7 @@ class ActorCritic(nn.Module):
         self.continuous_action_space = continuous_action_space
         self.device = device
         
-        # NEW: Recurrent parameters
+        # Recurrent parameters
         self.use_recurrent = use_recurrent
         self.recurrent_type = recurrent_type
         self.recurrent_hidden_dim = recurrent_hidden_dim
@@ -580,11 +577,11 @@ class ActorCritic(nn.Module):
         batch_size = obs.size(0)
         
         if self.use_recurrent:
-            # Add sequence dimension if needed
+
             if obs.dim() == 2:
                 obs = obs.unsqueeze(1)  # (batch_size, 1, obs_dim)
             
-            # Process through recurrent layer
+
             if self.recurrent_type == 'lstm':
                 if hidden_state is None:
                     h0 = torch.zeros(self.recurrent_layers, batch_size, self.recurrent_hidden_dim).to(self.device)

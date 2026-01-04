@@ -7,8 +7,11 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
 from Environment.wheel_env import WheelEnv
-from trainers import PPOTrainer        # adjust import path as needed
-from config import TrainingConfig  # adjust path if needed
+from trainers import PPOTrainer
+
+# Import vectorized components
+from wheel_env_vectorized import SubprocVecEnv, DummyVecEnv
+from trainers import VectorizedPPOTrainer
 
 
 def setup_logging(output_dir: str, use_tensorboard: bool = True):
@@ -29,17 +32,14 @@ def setup_logging(output_dir: str, use_tensorboard: bool = True):
 
 
 def train(cfg: DictConfig, output_dir: str = None):
-    """Train PPO agent using Hydra"""
+    """Train PPO agent using Hydra with vectorized environments"""
     print("\n" + "=" * 50)
-    print("Training PPO (Hydra)")
+    print("Training PPO (Vectorized)")
     print("=" * 50)
 
     # Print current configuration
     print(OmegaConf.to_yaml(cfg))
 
-    ##############################
-    # 1. Set seed and device
-    ##############################
     random.seed(cfg.random_seed)
     np.random.seed(cfg.random_seed)
     torch.manual_seed(cfg.random_seed)
@@ -59,10 +59,7 @@ def train(cfg: DictConfig, output_dir: str = None):
     cfg.device = str(device)
     print(f"Using device: {device}")
 
-    ##############################
-    # 2. Setup logging
-    ##############################
-    # Use provided output_dir or fall back to Hydra runtime dir
+
     if output_dir is None:
         try:
             output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -72,37 +69,64 @@ def train(cfg: DictConfig, output_dir: str = None):
     
     writer = setup_logging(str(output_dir))
 
-    ##############################
-    # 3. Create environment
-    ##############################
-    #env = WheelEnv(reward_func="spoke", action_space_selection="discrete")
-    env = instantiate(cfg.env)
 
-    ##############################
-    # 4. Create trainer
-    ##############################
-    # Pass output_dir to trainer (like in train_rainbow.py)
-    trainer = PPOTrainer(cfg, env, writer, output_dir=output_dir)
+    n_envs = getattr(cfg, 'n_envs', 8)
+    use_subproc = getattr(cfg, 'use_subproc', True)
+    
+    print(f"\nCreating {n_envs} parallel environments...")
+    print(f"Using {'SubprocVecEnv' if use_subproc else 'DummyVecEnv'}")
+    
+    # Extract environment kwargs from config
+    env_kwargs = OmegaConf.to_container(cfg.env, resolve=True)
+    env_kwargs.pop('_target_', None)
+    
+    print(f"Environment kwargs: {env_kwargs}")
+    
 
-    ##############################
-    # 5. Train or evaluate
-    ##############################
+    def make_env(seed):
+        def _init():
+            env = WheelEnv(**env_kwargs)
+            return env
+        return _init
+    
+    # Create vectorized environment
+    env_fns = [make_env(cfg.random_seed + i) for i in range(n_envs)]
+    
+    if use_subproc:
+        vec_env = SubprocVecEnv(env_fns, start_method='spawn')
+    else:
+        vec_env = DummyVecEnv(env_fns)
+    
+    print(f"Vectorized environment created:")
+    print(f"  - Observation space: {vec_env.observation_space}")
+    print(f"  - Action space: {vec_env.action_space}")
+    print(f"  - Num envs: {n_envs}")
+
+
+    trainer = VectorizedPPOTrainer(
+        config=cfg,
+        vec_env=vec_env,
+        writer=writer,
+        output_dir=output_dir
+    )
+
+
     mode = getattr(cfg, "mode", "train")
     if mode == "train":
         trainer.train()
     else:
-        trainer.evaluate()
+        print("Note: Evaluation uses single environment")
+        single_env = WheelEnv(**env_kwargs)
+        single_trainer = PPOTrainer(cfg, single_env, writer, output_dir=output_dir)
+        single_trainer.evaluate()
+        single_env.close()
 
-    ##############################
-    # 6. Cleanup
-    ##############################
     if writer:
         writer.close()
-    env.close()
+    vec_env.close()
 
 
 if __name__ == "__main__":
-    # Add Hydra decorator when running directly
     @hydra.main(config_path="configs", config_name="ppo_default", version_base=None)
     def main(cfg: DictConfig):
         train(cfg)

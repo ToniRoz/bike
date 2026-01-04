@@ -12,8 +12,11 @@ max_eps_steps: 1500
 update_interval: 1000
 
 # PPO hyperparameters
-num_epochs: 100
-batch_size: 64
+n_envs: 8                    
+use_subproc: true            # Parallel processes
+batch_size: 256              
+num_epochs: 10               
+gae_lambda: 0.95             
 gamma: 0.99
 eps_clip: 0.2
 entropy_coef: 0.01
@@ -29,8 +32,8 @@ activation: tanh
 # recurrent
 use_recurrent: false
 recurrent_type: 'gru' # lstm or gru
-recurrent_hidden_dim: 500         # Larger for complex task
-recurrent_layers: 1               # 2 layers for better learning
+recurrent_hidden_dim: 500         
+recurrent_layers: 1               
 recurrent_sequence_length: 3     
 recurrent_dropout: 0.1            # Dropout between layers
 
@@ -40,7 +43,7 @@ action_std_init: 0.1
 
 # Logging and checkpointing
 log_interval: 10000
-save_interval: 100000
+save_interval: 990000
 log_dir: logs
 ckpt_dir: checkpoints
 

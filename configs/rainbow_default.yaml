@@ -19,18 +19,18 @@ hidden_size: 500
 noisy_std: 0.1
 
 # Recurrent network settings
-use_recurrent: false          # Enable/disable RNN mode
-recurrent_sequence_length: 3  # Number of past state-action pairs to use
-recurrent_hidden_size: 500    # Hidden state size for LSTM/GRU
-recurrent_type: "gru"        # "lstm" or "gru"
-recurrent_layers: 1           # Number of recurrent layers
-recurrent_dropout: 0.0        # Dropout between recurrent layers (if layers > 1)
+use_recurrent: false          
+recurrent_sequence_length: 3  
+recurrent_hidden_size: 500    
+recurrent_type: "gru"        
+recurrent_layers: 1           
+recurrent_dropout: 0.0        
 
 # IQN components
-num_quantiles: 32        # Number of quantiles for training
-num_quantiles_eval: 32   # Number of quantiles for evaluation
+num_quantiles: 32        
+num_quantiles_eval: 32   
 embedding_dim: 64        # Dimension of cosine embedding for quantiles
-kappa: 1.0              # Huber loss threshold
+kappa: 1.0              # Huber loss 
 
 # Memory settings
 memory_capacity: 1000000

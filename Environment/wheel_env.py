@@ -8,25 +8,8 @@ from numba import njit
 
 """
 Todo:
-add new state spaces:
-     add code for current (only rimpoints state) (done)
-     look up how to calculate the spoketensions (can we jit this as well?) (done)
-     add the other two sate space configurations -> we actually dont need to track a tension array since we can go from init (done)
-     look through the whole code and remove / edit gpt comments (started)
-     name variables clearer for better readability (done)
-     add all the options we might want to the env config (number of spokes to turn, max turns, penalty for max)
-     things to add:     wheel parameters (done)
-                        len theta and n spokes need to be connected to statespace (done)
-                        add option for success reward and tension max (implement to the right units and compare to calc tension)
-                        starter tension
-     try adding fourier state (done)
-     get rid of the 800 in tensionstate (and track down where we need to change tracking for it and why tdmpc turns does not work)(done)
-     last to finish:
-        normalize raw by statesize or use integral formulation
-        add penalty (most sources speak of about 100-120 kgf max so i guess we should stop at 1000N)(done but needs adjustment of values)
+
         add different stoping condition (where spokes are within a certain tension of each other and total and displacment is under threshold)(sorta done)
-        add option for tangential displacement include (done)
-        add absolute logging (done)
         take a last look at reward functions and document
      
      make it speak when init
@@ -34,34 +17,21 @@ add new state spaces:
 """
 
 def compute_fourier_features(tot_def, n_harmonics=10):
-    """
-    Compute Fourier coefficients for the rim displacement.
-    
-    Args:
-        tot_def: shape (npts, 2) - [radial, lateral] in mm
-        n_harmonics: number of harmonics to keep (excluding DC)
-    
-    Returns:
-        features: array of shape (2 + 4*n_harmonics,)
-    """
+
     npts = tot_def.shape[0]
     
-    # Extract components
     rad = tot_def[:, 0]
     lat = tot_def[:, 1]
     
-    # Since we only have radial (no tangential), treat radial as the in-plane component
+
     rad_fft = np.fft.fft(rad) / npts
     lat_fft = np.fft.fft(lat) / npts
     
-    # Build feature vector
     features = []
     
-    # DC components (k=0)
     features.append(np.real(rad_fft[0]))  # mean radial
     features.append(np.real(lat_fft[0]))  # mean lateral
-    
-    # Harmonics 1 to n_harmonics
+
     for k in range(1, n_harmonics + 1):
         # Radial (in-plane)
         features.append(np.abs(rad_fft[k]) * 2)      # magnitude
@@ -83,9 +53,7 @@ def fast_wheel_calc_with_tension(
     B_spk,
     include_tan_state
 ):
-    # -------------------------
-    # Solve rim deformation
-    # -------------------------
+
     F = F_matrix @ tensionchanges
     dm = np.linalg.solve(K, F)
 
@@ -93,7 +61,7 @@ def fast_wheel_calc_with_tension(
     lat_def = B_lat @ dm
     tan_def = B_tan @ dm
 
-    # Rim state
+
     npts = len(rad_def)
     if include_tan_state:
         tot_def = np.empty((npts, 3))
@@ -102,7 +70,7 @@ def fast_wheel_calc_with_tension(
         tot_def[:, 2] = tan_def * 1000
     else:
         tot_def = np.empty((npts, 2))
-        tot_def[:, 0] = rad_def * 1000 # with adjustment per turn the units here are in [m] and we convert to [mm]
+        tot_def[:, 0] = rad_def * 1000 
         tot_def[:, 1] = lat_def * 1000
 
 
@@ -113,7 +81,7 @@ def fast_wheel_calc_with_tension(
     dT = np.empty(n_spokes)
 
     for i in range(n_spokes):
-        # Compute d vector 
+ 
         d = B_spk[i] @ dm   # (4-element vector: u, v, w, phi)
 
         u = d[0]
@@ -252,7 +220,7 @@ class WheelEnv(gym.Env):
         
         self.n_harmonics = n_harmonics
     
-        # Add new state space option
+
         if state_space_selection == "fourier":
             # 3 DC + 4*n_harmonics features
             n_features = 2 + 4 * n_harmonics
@@ -273,7 +241,7 @@ class WheelEnv(gym.Env):
             )
 
 
-        # One continuous dimension for "which spoke" (treated as continuous index)
+        # One continuous dimension for 
         if self.action_space_selection == "continous":
             self.action_space = gym.spaces.Box(
                 low=np.array([0.0, -1.0]),
@@ -404,6 +372,7 @@ class WheelEnv(gym.Env):
 
         terminated = False
         truncated = False
+        reward = 0
 
         if self.action_space_selection == "discrete":
 
@@ -440,20 +409,24 @@ class WheelEnv(gym.Env):
         
         # Compute improvement reward
         if self.reward_func == "raw":
-            reward = -state_norm # needs to be normalized and/or compared with integral difference        
+            reward = -state_norm      
        
-        elif self.reward_func == "normalized": # has risk of bad policy in continous action space
+        elif self.reward_func == "normalized": 
 
             if step_improvement > 0:
                 reward = 0
             elif step_improvement <= 0:
                 reward = -1.0
         
-        elif self.reward_func == "spokes": # same problem as "normalized"
+        elif self.reward_func == "spokes": 
             if np.all(np.abs(self.previous_turns) >= np.abs(self.spoke_turns)):
                 reward = 0
-            elif np.all(np.abs(self.previous_turns) <= np.abs(self.spoke_turns)):
+            elif np.all(np.abs(self.previous_turns) < np.abs(self.spoke_turns)):
                 reward = -1
+
+        elif self.reward_func == "combined":
+            reward = - (state_norm + np.sum(np.abs((self.tensions-self.init_tension)/400))/self.n_spokes)
+
 
         
         
@@ -465,8 +438,8 @@ class WheelEnv(gym.Env):
 
         if self.max_tension_penalty:
             if np.any(tensions > self.max_tension_threshold): #implement starter tension as variable
-                reward = reward - 20
-                truncated = True
+                reward = reward - 2
+                #truncated = True
 
         # Termination conditions
           # Time limit
@@ -524,13 +497,13 @@ class WheelEnv(gym.Env):
         self.EA = np.zeros(n, dtype=np.float64)
         self.lengths = np.zeros(n, dtype=np.float64)
 
-        # NEW: B_spk[i] = B_theta(theta_spoke_i)
+        # B_spk[i] = B_theta(theta_spoke_i)
         # Shape is (n_spokes, 4 + 8*n_modes)
         dof = 4 + 8 * self.mm.n_modes
         self.B_spk = np.zeros((n, 4, dof), dtype=np.float64)
 
 
-        # Also keep track of the spoke's angular index relative to rim θ grid (optional)
+
         self.spoke_theta_index = np.zeros(n, dtype=np.int64)
 
         for i, s in enumerate(spokes):
@@ -555,13 +528,7 @@ class WheelEnv(gym.Env):
 
 
     def wheel_calc(self, tensionchanges, return_fourier=False):
-        """
-        Calculate wheel displacement and tensions.
-        
-        Args:
-            tensionchanges: spoke tension adjustments
-            return_fourier: if True, also return Fourier features
-        """
+
         wheel_displacement, tensions = fast_wheel_calc_with_tension(
             self.K,
             self.F_matrix,

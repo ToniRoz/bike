@@ -360,11 +360,14 @@ class RainbowTrainer(BaseTrainer):
         self.agent.eval()
         self._evaluate_agent(0)
 
+
+
 class PPOTrainer(BaseTrainer):
     """Trainer for PPO with recurrent network support"""
     
     def __init__(self, config: PPOConfig, env, writer=None, output_dir=None):
         super().__init__(config, env, writer, output_dir=output_dir)
+        
         
         # Get environment dimensions
         obs_dim = env.observation_space.shape[0]

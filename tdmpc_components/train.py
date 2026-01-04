@@ -36,13 +36,6 @@ from Environment.wheel_env import WheelEnv
 
 
 
-'''
-Todo:
-  add network size parameter for value net (also check what over nets in the hansen code ) to the config 
-
-
-'''
-
 
 @hydra.main(config_name='config', config_path='.', version_base=None)
 def train(cfg: dict):
@@ -253,14 +246,15 @@ def train(cfg: dict):
     episode_initial_raw_state_norm = info_reset['raw state norm'].copy()
     episode_initial_spoke_tensions = info_reset['tensions delta'].copy()
     episode_initial_spoke_turns = info_reset['spoke turns'].copy()
-    first_raw_state_norm = info['raw state norm'][ienv]
-    first_tension_deltas = info['tensions delta'][ienv]
-    first_turns = info['spoke turns'][ienv]
-    writer.scalar(f'environment/initial state norm', first_raw_state_norm, global_step + ienv)
-    writer.scalar(f'environment/initial tension deltas sum', np.sum(np.abs(first_tension_deltas)), global_step + ienv)
-    writer.scalar(f'environment/initial tension deltas max', np.max(np.abs(first_tension_deltas)), global_step + ienv)
-    writer.scalar(f'environment/initial turns sum', np.sum(np.abs(first_turns)), global_step + ienv)
-    writer.scalar(f'environment/initial turns max', np.max(np.abs(first_turns)), global_step + ienv)
+    for ienv in range(env_config.num_envs):
+      first_raw_state_norm = info_reset['raw state norm'][ienv]
+      first_tension_deltas = info_reset['tensions delta'][ienv]
+      first_turns = info_reset['spoke turns'][ienv]
+      writer.scalar(f'environment/initial state norm', first_raw_state_norm, global_step + ienv)
+      writer.scalar(f'environment/initial tension deltas sum', np.sum(np.abs(first_tension_deltas)), global_step + ienv)
+      writer.scalar(f'environment/initial tension deltas max', np.max(np.abs(first_tension_deltas)), global_step + ienv)
+      writer.scalar(f'environment/initial turns sum', np.sum(np.abs(first_turns)), global_step + ienv)
+      writer.scalar(f'environment/initial turns max', np.max(np.abs(first_turns)), global_step + ienv)
 
     T = 250
     seed_steps = int(
@@ -308,6 +302,7 @@ def train(cfg: dict):
             final_raw_state_norm = info['raw state norm'][ienv]
             current_tension = np.sum(abs(info['tensions delta'][ienv]))
             current_turns = np.sum(abs(info['spoke turns'][ienv]))
+            max_disp = info['max disp'][ienv]
 
             current_tensions_max = np.max(abs(info['tensions delta'][ienv]))
             current_turns_max = np.max(abs(info['spoke turns'][ienv]))
@@ -315,10 +310,11 @@ def train(cfg: dict):
             initial_norm = episode_initial_raw_state_norm[ienv]
             first_tensions = np.sum(abs(episode_initial_spoke_tensions[ienv]))
             first_turns = np.sum(abs(episode_initial_spoke_turns[ienv]))
+            terminated = info["terminated"][ienv]
             
-            wheel_change = 100* (initial_norm - final_raw_state_norm) / max(initial_norm + 1e-15)
-            turn_change = 100 * (first_turns - current_turns) / max((first_turns), 1e-15)
-            tension_change = 100 * (first_tensions - current_tension) / max(abs(first_tensions), 1e-15)
+            wheel_change = 100* (initial_norm - final_raw_state_norm) / (initial_norm + 1e-15)
+            turn_change = 100 * (first_turns - current_turns) / (first_turns + 1e-15)
+            tension_change = 100 * (first_tensions - current_tension) / abs(first_tensions + 1e-15)
 
             writer.scalar(f'episode/return', r, global_step + ienv)
             writer.scalar(f'episode/length', l, global_step + ienv)
@@ -331,6 +327,11 @@ def train(cfg: dict):
             writer.scalar(f'environment/final tension deltas sum', current_tension, global_step + ienv)
             writer.scalar(f'environment/final turns max', current_turns_max, global_step + ienv)
             writer.scalar(f'environment/final turns sum', current_turns, global_step + ienv)
+            writer.scalar(f'environment/wheel max', max_disp, global_step + ienv)
+            if terminated:
+              writer.scalar(f'episode/terminated', 1, global_step + ienv)
+            else:
+              writer.scalar(f'episode/terminated', 0, global_step + ienv)
             ep_count[ienv] += 1
 
       if global_step >= seed_steps:
