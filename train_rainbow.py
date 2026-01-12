@@ -3,6 +3,15 @@ import random
 import time
 import numpy as np
 import torch
+import os
+import torch
+
+num_runs = int(os.getenv("NUM_PARALLEL_RUNS", "1"))
+fraction = 0.9 / num_runs
+
+torch.cuda.set_per_process_memory_fraction(fraction)
+print(f"[GPU] Using {fraction:.2f} of total VRAM per process")
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate

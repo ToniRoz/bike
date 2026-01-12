@@ -8,9 +8,6 @@ from numba import njit
 
 """
 Todo:
-
-        add different stoping condition (where spokes are within a certain tension of each other and total and displacment is under threshold)(sorta done)
-        take a last look at reward functions and document
      
      make it speak when init
      a render option would be nice
@@ -127,6 +124,7 @@ class WheelEnv(gym.Env):
                 max_tension_threshold = 1000,
                 include_tan_displacement = False,
                 reward_func="raw", 
+                alpha = 1,
                 action_space_selection="continous",
                 state_space_selection = "rimpoints",
                 n_harmonics = 20,
@@ -163,6 +161,7 @@ class WheelEnv(gym.Env):
         self.max_tension = 3 # here we should express this in tension instead of turns and relate it to the calculated tension
         self.global_step_count = 0
         self.action_space_selection = action_space_selection
+        self.alpha = alpha
         self.spoke_turns = np.zeros(self.n_spokes)
         self.reward_func = reward_func
         self.include_tan_displacement = include_tan_displacement
@@ -425,7 +424,7 @@ class WheelEnv(gym.Env):
                 reward = -1
 
         elif self.reward_func == "combined":
-            reward = - (state_norm + np.sum(np.abs((self.tensions-self.init_tension)/400))/self.n_spokes)
+            reward = - (self.alpha*state_norm + (1-self.alpha)*np.sum(np.abs((self.tensions-self.init_tension)/400))/self.n_spokes)
 
 
         

@@ -10,6 +10,7 @@ include_tan_displacement: false
 max_tension_threshold: 1200
 random_spoke_n: 5
 random_spoke_turns_max: 1
+alpha: 1
 max_tension_penalty: true
 hub_width: 0.05
 hub_diameter: 0.04

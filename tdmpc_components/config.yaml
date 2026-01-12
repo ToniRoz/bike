@@ -28,6 +28,7 @@ env:
   reward_func: normalized
   action_space_selection: continous
   state_space_selection: rimpoints
+  alpha: 0.7
 
   n_harmonics: 20
   include_tan_displacement: false
