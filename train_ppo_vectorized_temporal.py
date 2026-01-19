@@ -1,3 +1,20 @@
+"""
+train_ppo_vectorized_temporal.py
+
+Modified version of train_ppo_vectorized.py with frame stacking support.
+Copy this to your project and use it for frame stacking experiments.
+
+Usage:
+    # Baseline
+    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints
+    
+    # Frame stacking
+    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints +frame_stack_size=4
+    
+    # LSTM/GRU (already supported)
+    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints use_recurrent=true recurrent_type=lstm
+"""
+
 import os
 import random
 import numpy as np
@@ -13,6 +30,14 @@ from config import TrainingConfig
 # Import vectorized components
 from wheel_env_vectorized import SubprocVecEnv, DummyVecEnv
 from ppo_trainer_vectorized import VectorizedPPOTrainer
+
+# Import frame stacking
+try:
+    from frame_stacking import VecFrameStackWrapper
+    FRAME_STACK_AVAILABLE = True
+except ImportError:
+    FRAME_STACK_AVAILABLE = False
+    print("[Warning] frame_stacking.py not found - frame stacking disabled")
 
 
 def setup_logging(output_dir: str, use_tensorboard: bool = True):
@@ -35,7 +60,7 @@ def setup_logging(output_dir: str, use_tensorboard: bool = True):
 def train(cfg: DictConfig, output_dir: str = None):
     """Train PPO agent using Hydra with vectorized environments"""
     print("\n" + "=" * 50)
-    print("Training PPO (Vectorized)")
+    print("Training PPO (Vectorized) - Temporal Support")
     print("=" * 50)
 
     # Print current configuration
@@ -105,16 +130,22 @@ def train(cfg: DictConfig, output_dir: str = None):
     else:
         vec_env = DummyVecEnv(env_fns)
     
-    from frame_stacking import VecFrameStackWrapper
-
-# Apply frame stacking if configured
+    ##############################
+    # 3b. Apply Frame Stacking (NEW)
+    ##############################
     frame_stack_size = getattr(cfg, 'frame_stack_size', 0)
     if frame_stack_size > 1:
-        include_actions = getattr(cfg, 'frame_stack_include_actions', True)
-        print(f"[Frame Stacking] size={frame_stack_size}, include_actions={include_actions}")
-        vec_env = VecFrameStackWrapper(vec_env, stack_size=frame_stack_size, include_actions=include_actions)
+        if FRAME_STACK_AVAILABLE:
+            include_actions = getattr(cfg, 'frame_stack_include_actions', True)
+            print(f"\n[Frame Stacking] Applying wrapper:")
+            print(f"    Stack size: {frame_stack_size}")
+            print(f"    Include actions: {include_actions}")
+            vec_env = VecFrameStackWrapper(vec_env, stack_size=frame_stack_size, include_actions=include_actions)
+        else:
+            print("[ERROR] Frame stacking requested but frame_stacking.py not found!")
+            raise ImportError("frame_stacking.py required for frame stacking")
     
-    print(f"Vectorized environment created:")
+    print(f"\nVectorized environment created:")
     print(f"  - Observation space: {vec_env.observation_space}")
     print(f"  - Action space: {vec_env.action_space}")
     print(f"  - Num envs: {n_envs}")

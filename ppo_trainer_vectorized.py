@@ -140,7 +140,7 @@ class VectorizedPPOTrainer:
         self.checkpoint_dir.mkdir(exist_ok=True)
         
         # Get observation and action dimensions
-        obs_space = vec_env.single_observation_space
+        obs_space = vec_env.observation_space
         act_space = vec_env.single_action_space
         
         self.obs_dim = np.prod(obs_space.shape)

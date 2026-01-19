@@ -10,7 +10,7 @@ hydra:
 seed: 0
 max_steps: 1000000
 buffer_size: 300000
-save_interval_steps: 1000000
+save_interval_steps: 700000
 log_interval_steps: 10000
 
 env:

@@ -779,7 +779,7 @@ class PPOAgent:
         """Reset recurrent states"""
         if self.use_recurrent:
             self.obs_history.clear()
-            self.current_hidden_state = self.policy.reset_hidden_state(batch_size=1).to(self.device)
+            self.current_hidden_state = self.policy.reset_hidden_state(batch_size=1)
 
     def select_action(self, obs, deterministic=False):
         """Select action (handles recurrent vs standard)"""

@@ -1,14 +1,28 @@
+"""
+train_rainbow_temporal.py
+
+Modified version of train_rainbow.py with frame stacking support.
+Copy this to your project and use it for frame stacking experiments.
+
+Usage:
+    # Baseline
+    python train_rainbow_temporal.py env.state_space_selection=rimpoints
+    
+    # Frame stacking (use + for new params not in config)
+    python train_rainbow_temporal.py env.state_space_selection=rimpoints +frame_stack_size=4
+    
+    # LSTM/GRU (already supported)
+    python train_rainbow_temporal.py env.state_space_selection=rimpoints use_recurrent=true recurrent_type=lstm
+"""
+
 import os
 import random
 import time
 import numpy as np
 import torch
-import os
-import torch
 
 num_runs = int(os.getenv("NUM_PARALLEL_RUNS", "1"))
 fraction = 0.9 / num_runs
-
 torch.cuda.set_per_process_memory_fraction(fraction)
 print(f"[GPU] Using {fraction:.2f} of total VRAM per process")
 
@@ -18,6 +32,14 @@ from hydra.utils import instantiate
 
 from trainers import RainbowTrainer  
 from config import TrainingConfig  
+
+# Import frame stacking
+try:
+    from frame_stacking import FrameStackWrapper
+    FRAME_STACK_AVAILABLE = True
+except ImportError:
+    FRAME_STACK_AVAILABLE = False
+    print("[Warning] frame_stacking.py not found - frame stacking disabled")
 
 
 def setup_logging(output_dir: str, use_tensorboard: bool = True):
@@ -40,7 +62,7 @@ def setup_logging(output_dir: str, use_tensorboard: bool = True):
 def train(cfg: DictConfig, output_dir: str = None):
     """Train Rainbow DQN using Hydra"""
     print("\n" + "=" * 50)
-    print("Training Rainbow DQN (Hydra)")
+    print("Training Rainbow DQN - Temporal Support")
     print("=" * 50)
 
     # Print config summary
@@ -70,7 +92,6 @@ def train(cfg: DictConfig, output_dir: str = None):
     ##############################
     # 2. Setup logging
     ##############################
-    # Use provided output_dir or fall back to Hydra runtime dir
     if output_dir is None:
         try:
             output_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -83,25 +104,37 @@ def train(cfg: DictConfig, output_dir: str = None):
     ##############################
     # 3. Create environment
     ##############################
-    #env = WheelEnv(reward_func="spoke", action_space_selection="discrete")
     env = instantiate(cfg.env)
-
-    from frame_stacking import FrameStackWrapper
-
+    
+    ##############################
+    # 3b. Apply Frame Stacking (NEW)
+    ##############################
     frame_stack_size = getattr(cfg, 'frame_stack_size', 0)
     if frame_stack_size > 1:
-        include_actions = getattr(cfg, 'frame_stack_include_actions', True)
-        env = FrameStackWrapper(env, stack_size=frame_stack_size, include_actions=include_actions)
-        cfg.history_length = 1
+        if FRAME_STACK_AVAILABLE:
+            include_actions = getattr(cfg, 'frame_stack_include_actions', True)
+            print(f"\n[Frame Stacking] Applying wrapper:")
+            print(f"    Stack size: {frame_stack_size}")
+            print(f"    Include actions: {include_actions}")
+            env = FrameStackWrapper(env, stack_size=frame_stack_size, include_actions=include_actions)
+            # Override history_length since stacking is handled by wrapper
+            cfg.history_length = 1
+        else:
+            print("[ERROR] Frame stacking requested but frame_stacking.py not found!")
+            raise ImportError("frame_stacking.py required for frame stacking")
+    
+    print(f"\nEnvironment created:")
+    print(f"  - Observation space: {env.observation_space}")
+    print(f"  - Action space: {env.action_space}")
+    
     ##############################
     # 4. Create trainer
     ##############################
-    #trainer = RainbowTrainer(cfg, env, writer)
-    trainer = RainbowTrainer(cfg, env, writer, output_dir=output_dir)  # ✓ Pass output_dir
+    trainer = RainbowTrainer(cfg, env, writer, output_dir=output_dir)
+    
     ##############################
     # 5. Train or evaluate
     ##############################
-    # If your config has an explicit mode flag (train/eval), you can use it here.
     mode = getattr(cfg, "mode", "train")
     if mode == "train":
         trainer.train()
@@ -117,7 +150,6 @@ def train(cfg: DictConfig, output_dir: str = None):
 
 
 if __name__ == "__main__":
-    # Add Hydra decorator when running directly
     @hydra.main(config_path="configs", config_name="rainbow_default", version_base=None)
     def main(cfg: DictConfig):
         train(cfg)
