@@ -9,6 +9,10 @@ A web-implementation, python code and information on the dissertation can be fou
 There are three different Algorithms implemented in this repo: DQN (mostly with all the Rainbow improvements)[2], PPO[3] and TD-MPC2[4]
 All of them have a hydra-integrated config, where Rainbow and PPO link to the Environment config in the root/configs folder, where as TD-MPC2 instantiates from a seperate config in the tdmpc-components dir.
 
+## Notes 
+
+Towards the end of the Project the code became a bit scattered. Espacially vectorized training, as well as some scripts to realize training configurations dont fit neatly into the structure of the rest of the code. For questions on implementation and usage in the thesis you can contact me under t.rozsahegyi@gmx.de
+
 ## Algorithm Implementation
 
 ### DQN (Rainbow)

@@ -158,7 +158,7 @@ class WheelEnv(gym.Env):
 
         self.n_spokes = n_spokes
         self.episode_counter = 0
-        self.max_tension = 3 # here we should express this in tension instead of turns and relate it to the calculated tension
+        self.max_tension = 3
         self.global_step_count = 0
         self.action_space_selection = action_space_selection
         self.alpha = alpha

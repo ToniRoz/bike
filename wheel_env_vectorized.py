@@ -1,13 +1,4 @@
-"""
-Vectorized Wheel Environment for PPO Training
 
-Two approaches provided:
-1. SubprocVecEnv - Uses multiprocessing (works with existing WheelEnv)
-2. BatchedWheelEnv - True batched vectorization (faster, requires numpy batching)
-
-For Colab/GPU training, SubprocVecEnv is recommended as it parallelizes the CPU-bound
-wheel physics while keeping the neural network on GPU.
-"""
 
 import gymnasium as gym
 import numpy as np
@@ -16,10 +7,6 @@ import multiprocessing as mp
 from functools import partial
 import cloudpickle
 
-
-# =============================================================================
-# APPROACH 1: SubprocVecEnv (Recommended for your use case)
-# =============================================================================
 
 def _worker(remote, parent_remote, env_fn_wrapper):
     """Worker process for SubprocVecEnv."""
@@ -68,26 +55,7 @@ class CloudpickleWrapper:
 
 
 class SubprocVecEnv:
-    """
-    Vectorized environment that runs multiple environments in subprocesses.
-    
-    This is ideal for WheelEnv because:
-    - The wheel physics (numpy/numba) runs on CPU in parallel processes
-    - The neural network runs on GPU
-    - No GIL contention between environments
-    
-    Usage:
-        def make_env(seed):
-            def _init():
-                env = WheelEnv(reward_func='raw', action_space_selection='discrete')
-                env.reset(seed=seed)
-                return env
-            return _init
-        
-        vec_env = SubprocVecEnv([make_env(i) for i in range(8)])
-        obs = vec_env.reset()  # shape: (8, obs_dim)
-        obs, rewards, dones, infos = vec_env.step(actions)  # actions shape: (8,) or (8, action_dim)
-    """
+
     
     def __init__(self, env_fns: List[Callable], start_method: str = 'spawn'):
         self.n_envs = len(env_fns)
@@ -173,10 +141,7 @@ class SubprocVecEnv:
 
 
 class DummyVecEnv:
-    """
-    Vectorized environment that runs sequentially (for debugging).
-    Same API as SubprocVecEnv but runs in a single process.
-    """
+
     
     def __init__(self, env_fns: List[Callable]):
         self.envs = [fn() for fn in env_fns]
@@ -230,22 +195,10 @@ class DummyVecEnv:
         return self.n_envs
 
 
-# =============================================================================
-# APPROACH 2: True Batched Vectorization (Maximum Performance)
-# =============================================================================
+
 
 class BatchedWheelEnv:
-    """
-    True batched vectorized wheel environment.
-    
-    This runs all environments in a single process using batched numpy operations.
-    Much faster than SubprocVecEnv but requires more memory.
-    
-    Key insight: Since fast_wheel_calc_with_tension uses np.linalg.solve which
-    doesn't batch well, we use a loop but keep everything in numpy (no Python overhead).
-    
-    For true GPU acceleration, you'd need to port the physics to JAX or PyTorch.
-    """
+
     
     def __init__(
         self,
@@ -592,27 +545,7 @@ def make_vec_env(
     use_subproc: bool = True,
     **env_kwargs
 ) -> SubprocVecEnv | BatchedWheelEnv | DummyVecEnv:
-    """
-    Create a vectorized wheel environment.
-    
-    Args:
-        n_envs: Number of parallel environments
-        use_subproc: If True, use SubprocVecEnv (recommended for Colab)
-                     If False, use BatchedWheelEnv for true batching
-        **env_kwargs: Arguments passed to WheelEnv
-    
-    Returns:
-        Vectorized environment
-    
-    Example:
-        vec_env = make_vec_env(
-            n_envs=8,
-            use_subproc=True,
-            reward_func='raw',
-            action_space_selection='discrete',
-            state_space_selection='rimpoints'
-        )
-    """
+
     if use_subproc:
         # Import here to avoid circular imports
         from wheel_env import WheelEnv

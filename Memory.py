@@ -4,11 +4,6 @@ import numpy as np
 import torch
 
 
-"""
-Todo:
- none
-"""
-
 
 
 def create_transition_dtype(state_shape):

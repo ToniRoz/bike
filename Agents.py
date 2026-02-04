@@ -429,10 +429,6 @@ class RainbowAgent:
         """
         Load model checkpoint
         
-        Args:
-            path: Path to checkpoint file
-            load_optimizer: Whether to load optimizer state (set False for evaluation)
-            load_recurrent_state: Whether to restore action/state history (usually False)
         """
         checkpoint = torch.load(path, map_location=self.device)
         
@@ -568,11 +564,6 @@ class ActorCritic(nn.Module):
     def forward(self, obs, hidden_state=None, mask=None):
         """
         Forward pass - handles both recurrent and non-recurrent cases
-        
-        Args:
-            obs: Observations (batch_size, obs_dim) or (batch_size, seq_len, obs_dim)
-            hidden_state: Optional hidden state for recurrent networks
-            mask: Optional mask for variable length sequences
         """
         batch_size = obs.size(0)
         

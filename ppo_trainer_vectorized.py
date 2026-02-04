@@ -1,12 +1,4 @@
-"""
-PPO Trainer with Vectorized Environment Support
 
-This trainer is designed to work with vectorized environments for better GPU utilization.
-Key changes from the original:
-1. Collects rollouts from multiple environments in parallel
-2. Better batching for GPU operations
-3. Proper handling of episode boundaries in vectorized setting
-"""
 
 import os
 import numpy as np
@@ -110,14 +102,7 @@ class VectorizedRolloutBuffer:
 
 
 class VectorizedPPOTrainer:
-    """
-    PPO Trainer optimized for vectorized environments.
-    
-    Key improvements:
-    1. Parallel rollout collection from multiple environments
-    2. Larger effective batch sizes for better GPU utilization
-    3. GAE (Generalized Advantage Estimation) for better variance reduction
-    """
+
     
     def __init__(
         self,
@@ -230,21 +215,7 @@ class VectorizedPPOTrainer:
     def collect_rollouts(self, obs: np.ndarray, first_state_norms: np.ndarray, 
                          first_tensions: np.ndarray, first_turns: np.ndarray,
                          total_steps: int) -> Tuple[np.ndarray, dict, int]:
-        """
-        Collect rollouts from vectorized environment.
-        
-        Args:
-            obs: Current observations (n_envs, obs_dim)
-            first_state_norms: Initial state norms for each env
-            first_tensions: Initial tensions for each env
-            first_turns: Initial turns for each env
-            total_steps: Current total step count for logging
-        
-        Returns:
-            next_obs: Observations after rollout
-            metrics: Dictionary of collected metrics
-            total_steps: Updated step count
-        """
+
         episode_rewards = []
         episode_lengths = []
         

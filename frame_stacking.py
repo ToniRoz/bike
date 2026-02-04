@@ -1,11 +1,4 @@
-"""
-Frame Stacking Wrapper with Action History
 
-Provides temporal context to feedforward networks by:
-1. Stacking N previous observations
-2. Including N-1 previous actions (one-hot encoded)
-3. Zero-padding at episode start
-"""
 
 import numpy as np
 import gymnasium as gym

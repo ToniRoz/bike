@@ -1,10 +1,4 @@
-"""
-Todo:
-    read and remove useless ai comments (done)
-    add dynamic state space from env (rainbow)(done)
-    add lstm support (rainbow) (ppo) should take the action with the last states
-    add logging for tensions and turns (done)
-"""
+
 import os
 import bz2
 import pickle

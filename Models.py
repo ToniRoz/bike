@@ -92,10 +92,7 @@ class QuantileEmbedding(nn.Module):
 
 
 class DQN(nn.Module):
-    """
-    Rainbow DQN with IQN (Implicit Quantile Network)
-    Now with DYNAMIC input dimension based on environment
-    """
+
     def __init__(self, args, action_space, state_dim):
         super(DQN, self).__init__()
         self.action_space = action_space
@@ -124,14 +121,7 @@ class DQN(nn.Module):
         self.fc_z_a = NoisyLinear(self.hidden_size, action_space, std_init=args.noisy_std)
         
     def forward(self, x, num_quantiles):
-        """
-        Args:
-            x: State tensor of shape (batch_size, history_length * state_dim)
-            num_quantiles: Number of quantiles to sample (N for training, K for evaluation)
-        Returns:
-            quantile_values: Tensor of shape (batch_size, action_space, num_quantiles)
-            taus: Sampled quantile fractions of shape (batch_size, num_quantiles)
-        """
+
         batch_size = x.size(0)
         device = x.device
         
@@ -186,10 +176,7 @@ class DQN(nn.Module):
 
 
 class RecurrentDQN(nn.Module):
-    """
-    Recurrent Rainbow DQN with IQN (Implicit Quantile Network)
-    Takes sequences of (state, action) pairs as input
-    """
+
     def __init__(self, args, action_space, state_dim):
         super(RecurrentDQN, self).__init__()
         self.action_space = action_space
@@ -246,15 +233,7 @@ class RecurrentDQN(nn.Module):
         self.hidden_state = None
         
     def forward(self, x, num_quantiles, mask=None):
-        """
-        Args:
-            x: Input tensor of shape (batch_size, seq_len, state_dim + action_space)
-            num_quantiles: Number of quantiles to sample
-            mask: Optional mask of shape (batch_size, seq_len) for padded timesteps
-        Returns:
-            quantile_values: Tensor of shape (batch_size, action_space, num_quantiles)
-            taus: Sampled quantile fractions of shape (batch_size, num_quantiles)
-        """
+
         batch_size = x.size(0)
         seq_len = x.size(1)
         device = x.device
@@ -394,17 +373,7 @@ class VectorizedRolloutBuffer:
             self.pos = 0
     
     def get(self, last_values: np.ndarray, gamma: float = 0.99, gae_lambda: float = 0.95):
-        """
-        Get all data and compute returns/advantages using GAE.
-        
-        Args:
-            last_values: Value estimates for the last observation (n_envs,)
-            gamma: Discount factor
-            gae_lambda: GAE lambda parameter
-        
-        Returns:
-            Dictionary of tensors ready for PPO update
-        """
+
         # Compute advantages using GAE
         advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         last_gae_lam = 0
@@ -441,13 +410,7 @@ class VectorizedRolloutBuffer:
         self.full = False
 
 class HybridActorCritic(nn.Module):
-    """
-    Actor-Critic with hybrid action space:
-    - Discrete: which spoke to adjust (Categorical over n_spokes)
-    - Continuous: how much to adjust (Normal distribution)
-    
-    Supports optional recurrent layers (LSTM/GRU).
-    """
+
     
     def __init__(
         self,
@@ -557,16 +520,7 @@ class HybridActorCritic(nn.Module):
         return features, new_hidden_state
     
     def forward(self, obs, hidden_state=None):
-        """
-        Forward pass.
-        
-        Returns:
-            spoke_logits: (batch, n_spokes) - logits for spoke selection
-            delta_mean: (batch, 1) - mean for delta
-            delta_std: (batch, 1) - std for delta (broadcasted)
-            value: (batch, 1) - state value
-            new_hidden_state: updated hidden state (or None)
-        """
+ 
         features, new_hidden_state = self._get_features(obs, hidden_state)
         
         # Spoke selection (discrete)

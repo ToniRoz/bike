@@ -1,19 +1,4 @@
-"""
-train_ppo_vectorized_temporal.py
 
-Modified version of train_ppo_vectorized.py with frame stacking support.
-Copy this to your project and use it for frame stacking experiments.
-
-Usage:
-    # Baseline
-    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints
-    
-    # Frame stacking
-    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints +frame_stack_size=4
-    
-    # LSTM/GRU (already supported)
-    python train_ppo_vectorized_temporal.py env.state_space_selection=rimpoints use_recurrent=true recurrent_type=lstm
-"""
 
 import os
 import random

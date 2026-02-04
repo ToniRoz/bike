@@ -193,12 +193,6 @@ def load_config(algorithm: str, config_path: Optional[str] = None):
     """
     Load configuration for specified algorithm
     
-    Args:
-        algorithm: 'rainbow', 'ppo', or 'tdmpc2'
-        config_path: Path to custom config file. If None, uses default.
-    
-    Returns:
-        Config object (RainbowConfig, PPOConfig, or TDMPC2Config)
     """
     algorithm = algorithm.lower()
     

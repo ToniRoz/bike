@@ -1,9 +1,4 @@
-"""
-Fourier Mode Reconstruction Analysis - For Use with Actual WheelEnv
 
-Run this script in your environment where bikewheelcalc is installed.
-It will use your actual wheel simulation to generate displacement data.
-"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -61,10 +56,7 @@ def analyze_single_state(radial, lateral, max_harmonics=50):
 
 
 def run_full_analysis(n_samples=50, max_harmonics=50, random_spokes_range=[3, 5, 8, 12]):
-    """
-    Run comprehensive analysis across multiple random wheel states.
-    Tests different levels of wheel damage (number of affected spokes).
-    """
+
     results = {}
     
     for n_random in random_spokes_range:
@@ -213,9 +205,7 @@ Harmonics & Features & MSE$_{\text{rad}}$ [mm²] & MSE$_{\text{lat}}$ [mm²] & $
 
 
 def main():
-    print("="*80)
-    print("FOURIER MODE RECONSTRUCTION ANALYSIS FOR WHEEL TRUING ENVIRONMENT")
-    print("="*80)
+
     
     # Run analysis with different damage levels
     results = run_full_analysis(
@@ -235,16 +225,13 @@ def main():
             r2 = data['r2_combined'][idx] * 100
             print(f"{h:<12} {mse:>14.6f} {r2:>11.4f}%")
     
-    # Create visualization
+
     plot_results(results)
     
-    # Print LaTeX table
+
     print_latex_table(results)
     
-    # Final recommendation
-    print("\n" + "="*80)
-    print("ANALYSIS CONCLUSION")
-    print("="*80)
+
     
     # Find optimal number of harmonics
     mid_key = list(results.keys())[len(results)//2]

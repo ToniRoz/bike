@@ -132,16 +132,7 @@ class HybridActorCritic(nn.Module):
         return features, new_hidden_state
     
     def forward(self, obs, hidden_state=None):
-        """
-        Forward pass.
-        
-        Returns:
-            spoke_logits: (batch, n_spokes) - logits for spoke selection
-            delta_mean: (batch, 1) - mean for delta
-            delta_std: (batch, 1) - std for delta (broadcasted)
-            value: (batch, 1) - state value
-            new_hidden_state: updated hidden state (or None)
-        """
+
         features, new_hidden_state = self._get_features(obs, hidden_state)
         
         # Spoke selection (discrete)
@@ -157,15 +148,7 @@ class HybridActorCritic(nn.Module):
         return spoke_logits, delta_mean, delta_std, value, new_hidden_state
     
     def select_action(self, obs, hidden_state=None, deterministic=False):
-        """
-        Select action.
-        
-        Returns:
-            action: numpy array [spoke_idx, delta]
-            log_prob: combined log probability
-            value: state value
-            (new_hidden_state if recurrent)
-        """
+
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
         
@@ -203,20 +186,7 @@ class HybridActorCritic(nn.Module):
             return action, total_log_prob.cpu().numpy(), value.item()
     
     def evaluate_actions(self, states, actions, hidden_states=None, masks=None):
-        """
-        Evaluate actions for PPO update.
-        
-        Args:
-            states: (batch, obs_dim) or (batch, seq_len, obs_dim)
-            actions: (batch, 2) - [spoke_idx, delta]
-            hidden_states: optional for recurrent
-            masks: optional for recurrent
-        
-        Returns:
-            values: (batch,)
-            log_probs: (batch,)
-            entropy: (batch,)
-        """
+
         spoke_logits, delta_mean, delta_std, values, _ = self.forward(states, hidden_states)
         
         # Extract spoke indices and deltas from actions

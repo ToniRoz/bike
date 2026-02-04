@@ -1,17 +1,4 @@
-"""
-PPO Agent Factory - creates the appropriate PPO agent based on action space configuration.
 
-Usage in trainers.py or train_ppo.py:
-    from ppo_agent_factory import create_ppo_agent
-    
-    agent = create_ppo_agent(
-        obs_dim=obs_dim,
-        action_dim=action_dim,
-        action_space_type='hybrid',  # 'discrete', 'continuous', 'hybrid', or 'all_spokes'
-        n_spokes=36,
-        config=cfg
-    )
-"""
 
 import torch
 import numpy as np
@@ -41,20 +28,7 @@ def create_ppo_agent(
     recurrent_sequence_length=16,
     recurrent_dropout=0.0,
 ):
-    """
-    Factory function to create the appropriate PPO agent.
-    
-    Args:
-        obs_dim: Observation dimension
-        action_space: Gym action space object
-        action_space_type: One of 'discrete', 'continuous', 'hybrid', 'all_spokes'
-        n_spokes: Number of spokes (needed for hybrid)
-        hidden_dim: Hidden layer dimension
-        ... (other PPO hyperparameters)
-    
-    Returns:
-        PPO agent instance
-    """
+
     
     print(f"\n[PPO Factory] Creating agent for action_space_type: {action_space_type}")
     
